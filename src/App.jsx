@@ -6,7 +6,8 @@ import {
   Hash,
   RotateCw,
   Image as ImageIcon,
-  Trash2
+  Trash2,
+  DownloadCloud
 } from 'lucide-react';
 
 import WatermarkTool from './components/WatermarkTool';
@@ -19,6 +20,23 @@ import PageRemoverTool from './components/PageRemoverTool';
 
 function App() {
   const [activeTab, setActiveTab] = useState('watermark');
+  const [installPrompt, setInstallPrompt] = React.useState(null);
+
+  React.useEffect(() => {
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    });
+  }, []);
+
+  const handleInstall = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setInstallPrompt(null);
+    }
+  };
 
   const tools = [
     { id: 'watermark', name: 'Watermark', icon: <Droplets size={20} />, component: <WatermarkTool /> },
@@ -52,11 +70,25 @@ function App() {
             </div>
           ))}
         </nav>
+
+        {installPrompt && (
+          <div className="install-section">
+            <button className="install-btn" onClick={handleInstall}>
+              <DownloadCloud size={20} />
+              <span>Download App</span>
+            </button>
+          </div>
+        )}
       </aside>
 
       {/* Mobile Top Header */}
       <div className="mobile-header">
         <img src="/logo.png" alt="SealPDF Logo" className="mobile-logo-img" />
+        {installPrompt && (
+          <button className="mobile-install-btn" onClick={handleInstall}>
+            <DownloadCloud size={20} />
+          </button>
+        )}
       </div>
 
       <main className="main-content">
