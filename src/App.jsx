@@ -7,7 +7,8 @@ import {
   RotateCw,
   Image as ImageIcon,
   Trash2,
-  DownloadCloud
+  DownloadCloud,
+  Type
 } from 'lucide-react';
 
 import WatermarkTool from './components/WatermarkTool';
@@ -17,6 +18,7 @@ import PageNumbererTool from './components/PageNumbererTool';
 import PageRotatorTool from './components/PageRotatorTool';
 import ImageToPdfTool from './components/ImageToPdfTool';
 import PageRemoverTool from './components/PageRemoverTool';
+import EditorTool from './components/EditorTool';
 
 function App() {
   const [activeTab, setActiveTab] = useState('watermark');
@@ -46,6 +48,7 @@ function App() {
     { id: 'rotator', name: 'Page Rotator', icon: <RotateCw size={20} />, component: <PageRotatorTool /> },
     { id: 'image2pdf', name: 'Image to PDF', icon: <ImageIcon size={20} />, component: <ImageToPdfTool /> },
     { id: 'remover', name: 'Page Remover', icon: <Trash2 size={20} />, component: <PageRemoverTool /> },
+    { id: 'editor', name: 'PDF Editor', icon: <Type size={20} />, component: <EditorTool /> },
   ];
 
   const activeTool = tools.find(t => t.id === activeTab);
