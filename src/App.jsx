@@ -20,8 +20,16 @@ import ImageToPdfTool from './components/ImageToPdfTool';
 import PageRemoverTool from './components/PageRemoverTool';
 import EditorTool from './components/EditorTool';
 
+import Footer from './components/Footer';
+import CookieConsent from './components/CookieConsent';
+import PrivacyPolicy from './components/PrivacyPolicy';
+import TermsOfService from './components/TermsOfService';
+import AboutUs from './components/AboutUs';
+import ContactUs from './components/ContactUs';
+
 function App() {
   const [activeTab, setActiveTab] = useState('watermark');
+  const [legalPage, setLegalPage] = useState(null); // 'privacy', 'terms', 'about', 'contact'
   const [installPrompt, setInstallPrompt] = React.useState(null);
 
   React.useEffect(() => {
@@ -40,6 +48,15 @@ function App() {
     }
   };
 
+  const handleLegalClick = (page) => {
+    setLegalPage(page);
+    window.scrollTo(0, 0);
+  };
+
+  const closeLegalPage = () => {
+    setLegalPage(null);
+  };
+
   const tools = [
     { id: 'watermark', name: 'Watermark', icon: <Droplets size={20} />, component: <WatermarkTool /> },
     { id: 'merger', name: 'PDF Merger', icon: <Layers size={20} />, component: <MergerTool /> },
@@ -53,11 +70,28 @@ function App() {
 
   const activeTool = tools.find(t => t.id === activeTab);
 
+  const renderContent = () => {
+    if (legalPage === 'privacy') return <PrivacyPolicy onBack={closeLegalPage} />;
+    if (legalPage === 'terms') return <TermsOfService onBack={closeLegalPage} />;
+    if (legalPage === 'about') return <AboutUs onBack={closeLegalPage} />;
+    if (legalPage === 'contact') return <ContactUs onBack={closeLegalPage} />;
+
+    return (
+      <div className="tool-container">
+        <header className="page-header">
+          <h1>{activeTool.name}</h1>
+          <p className="subtitle">SealPDF • Professional PDF Tools</p>
+        </header>
+        {activeTool.component}
+      </div>
+    );
+  };
+
   return (
     <div className="app-shell">
       {/* Sidebar for Desktop */}
       <aside className="sidebar">
-        <div className="sidebar-logo">
+        <div className="sidebar-logo" onClick={() => { setActiveTab('watermark'); setLegalPage(null); }} style={{ cursor: 'pointer' }}>
           <img src="/logo.png" alt="SealPDF Logo" className="logo-img" />
         </div>
 
@@ -65,8 +99,8 @@ function App() {
           {tools.map(tool => (
             <div
               key={tool.id}
-              className={`nav-item ${activeTab === tool.id ? 'active' : ''}`}
-              onClick={() => setActiveTab(tool.id)}
+              className={`nav-item ${(activeTab === tool.id && !legalPage) ? 'active' : ''}`}
+              onClick={() => { setActiveTab(tool.id); setLegalPage(null); }}
             >
               {tool.icon}
               <span>{tool.name}</span>
@@ -86,7 +120,7 @@ function App() {
 
       {/* Mobile Top Header */}
       <div className="mobile-header">
-        <img src="/logo.png" alt="SealPDF Logo" className="mobile-logo-img" />
+        <img src="/logo.png" alt="SealPDF Logo" className="mobile-logo-img" onClick={() => { setActiveTab('watermark'); setLegalPage(null); }} />
         {installPrompt && (
           <button className="mobile-install-btn" onClick={handleInstall}>
             <DownloadCloud size={20} />
@@ -95,14 +129,8 @@ function App() {
       </div>
 
       <main className="main-content">
-        <div className="tool-container">
-          <header className="page-header">
-            <h1>{activeTool.name}</h1>
-            <p className="subtitle">SealPDF • Professional PDF Tools</p>
-          </header>
-
-          {activeTool.component}
-        </div>
+        {renderContent()}
+        <Footer onLinkClick={handleLegalClick} />
       </main>
 
       {/* Mobile Bottom Navigation */}
@@ -110,14 +138,16 @@ function App() {
         {tools.map(tool => (
           <div
             key={tool.id}
-            className={`bottom-nav-item ${activeTab === tool.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(tool.id)}
+            className={`bottom-nav-item ${(activeTab === tool.id && !legalPage) ? 'active' : ''}`}
+            onClick={() => { setActiveTab(tool.id); setLegalPage(null); }}
           >
             {tool.icon}
             <span>{tool.name}</span>
           </div>
         ))}
       </nav>
+
+      <CookieConsent />
     </div>
   );
 }
