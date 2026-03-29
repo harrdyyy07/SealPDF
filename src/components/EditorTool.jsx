@@ -440,10 +440,9 @@ const EditorTool = () => {
                 <div className="workspace-editor-area">
                     {!file ? (
                         <div className="workspace-upload-zone" onClick={() => document.getElementById('pdf-upload-workspace').click()}>
-                            <div className="upload-inner">
-                                <div className="icon-circle"><FileUp size={48} color="#818cf8" /></div>
-                                <h2>Open PDF Workspace</h2>
-                                <p>Click to choose a file or drag & drop</p>
+                            <div className="upload-inner" style={{ border: 'none', background: 'transparent' }}>
+                                <div className="huge-select-btn">Select PDF file</div>
+                                <p className="upload-subtext" style={{ marginTop: '1rem' }}>or drop PDF here to edit</p>
                                 <input type="file" id="pdf-upload-workspace" hidden accept=".pdf" onChange={onFileChange} />
                             </div>
                         </div>

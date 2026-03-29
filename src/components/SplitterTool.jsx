@@ -75,16 +75,15 @@ const SplitterTool = () => {
                     {!file ? (
                         <div className="glass-card clickable" onClick={() => document.getElementById('split-upload').click()}>
                             <div className="upload-zone">
-                                <div className="icon-circle"><Scissors size={48} color="#818cf8" /></div>
-                                <h3>Extract Pages from PDF</h3>
-                                <p>Click to upload the source PDF</p>
+                                <div className="huge-select-btn">Select PDF file</div>
+                                <p className="upload-subtext">or drop PDF here</p>
                                 <input type="file" id="split-upload" hidden accept=".pdf" onChange={onFileChange} />
                             </div>
                         </div>
                     ) : (
                         <div className="glass-card">
                             <div className="file-info-header">
-                                <FileText color="#818cf8" />
+                                <FileText  />
                                 <div className="file-details">
                                     <p className="file-name">{file.name}</p>
                                     <p className="file-meta">Source Document</p>
@@ -105,7 +104,7 @@ const SplitterTool = () => {
 
                 <aside className="glass-card">
                     <div className="aside-header">
-                        <Scissors size={20} color="#818cf8" />
+                        <Scissors size={20}  />
                         <h3>Pages to Extract</h3>
                     </div>
                     <div className="controls-group">

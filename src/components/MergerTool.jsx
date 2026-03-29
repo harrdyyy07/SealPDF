@@ -87,9 +87,8 @@ const MergerTool = () => {
                             </div>
                         ))}
 
-                        <label className="add-more-card clickable">
-                            <FilePlus size={32} />
-                            <span>Add PDF Files</span>
+                        <label className="upload-zone clickable" style={{ padding: '3rem 2rem', marginTop: '1rem', border: '2px dashed var(--border-color)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                            <div className="huge-select-btn" style={{ pointerEvents: 'none', backgroundColor: '#333', color: 'white' }}>+ Add more files</div>
                             <input type="file" multiple accept=".pdf" hidden onChange={onFilesChange} />
                         </label>
                     </div>

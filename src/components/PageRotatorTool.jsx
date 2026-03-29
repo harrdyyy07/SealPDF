@@ -72,16 +72,15 @@ const PageRotatorTool = () => {
                     {!file ? (
                         <div className="glass-card clickable" onClick={() => document.getElementById('rotate-upload').click()}>
                             <div className="upload-zone">
-                                <div className="icon-circle"><RotateCw size={48} color="#818cf8" /></div>
-                                <h3>Rotate PDF Pages</h3>
-                                <p>Upload a PDF to rotate its pages</p>
+                                <div className="huge-select-btn">Select PDF file</div>
+                                <p className="upload-subtext">or drop PDF here</p>
                                 <input type="file" id="rotate-upload" hidden accept=".pdf" onChange={onFileChange} />
                             </div>
                         </div>
                     ) : (
                         <div className="glass-card">
                             <div className="file-info-header">
-                                <FileText color="#818cf8" />
+                                <FileText  />
                                 <div className="file-details">
                                     <p className="file-name">{file.name}</p>
                                     <p className="file-meta">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
@@ -102,7 +101,7 @@ const PageRotatorTool = () => {
 
                 <aside className="glass-card">
                     <div className="aside-header">
-                        <Settings size={20} color="#818cf8" />
+                        <Settings size={20}  />
                         <h3>Rotation Options</h3>
                     </div>
                     <div className="controls-group">
