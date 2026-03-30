@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Droplets, Layers, Scissors, Hash, RotateCw, Image as ImageIcon, 
-  Trash2, DownloadCloud, Type, FileOutput, RefreshCw, Crop, Lock, ChevronDown, Moon, Sun, ShieldCheck, Zap
+  Trash2, DownloadCloud, Type, FileOutput, RefreshCw, Crop, Lock, ChevronDown, Moon, Sun, ShieldCheck, Zap, Menu, X, User
 } from 'lucide-react';
 import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from '@clerk/clerk-react';
 
@@ -34,6 +34,7 @@ import ContactUs from './components/ContactUs';
 
 function App() {
   const [installPrompt, setInstallPrompt] = React.useState(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const [isDarkMode, setIsDarkMode] = React.useState(() => {
     return localStorage.getItem('theme') === 'dark' || false;
   });
@@ -148,6 +149,9 @@ function App() {
     <div className="app-shell">
       <header className="top-header">
         <div className="header-left">
+          <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(true)}>
+            <Menu size={24} />
+          </button>
           <Link to="/" className="logo-container">
             <img src="/logo.png" alt="SealPDF Logo" className="logo-img" />
           </Link>
@@ -205,7 +209,10 @@ function App() {
               <button className="auth-btn login">Log in</button>
             </SignInButton>
             <SignUpButton mode="modal">
-              <button className="auth-btn signup">Sign up</button>
+              <button className="auth-btn signup">
+                <span className="signup-text">Sign up</span>
+                <User className="signup-icon" size={20} />
+              </button>
             </SignUpButton>
           </SignedOut>
 
@@ -214,6 +221,32 @@ function App() {
           </SignedIn>
         </div>
       </header>
+
+      {/* Mobile Navigation Drawer */}
+      <div className={`mobile-drawer ${mobileMenuOpen ? 'open' : ''}`}>
+        <div className="mobile-drawer-backdrop" onClick={() => setMobileMenuOpen(false)} />
+        <div className="mobile-drawer-content">
+          <div className="mobile-drawer-header">
+            <img src="/logo.png" alt="SealPDF Logo" className="logo-img" />
+            <button className="icon-btn" onClick={() => setMobileMenuOpen(false)}><X size={24} /></button>
+          </div>
+          <div className="mobile-drawer-links">
+            <Link to="/" onClick={() => setMobileMenuOpen(false)}>Home</Link>
+            <div className="mobile-drawer-divider"></div>
+            {categories.map((category, idx) => (
+              <div key={idx} className="mobile-drawer-category">
+                <h4>{category.title}</h4>
+                {category.tools.map(tool => (
+                  <Link key={tool.path} to={tool.path} onClick={() => setMobileMenuOpen(false)}>
+                    {React.cloneElement(tool.icon, { size: 16, strokeWidth: 2 })}
+                    {tool.name}
+                  </Link>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
 
       <main className="main-content">
         <Routes>
