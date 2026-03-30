@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Droplets, Layers, Scissors, Hash, RotateCw, Image as ImageIcon, 
-  Trash2, DownloadCloud, Type, FileOutput, RefreshCw, Crop, Lock
+  Trash2, DownloadCloud, Type, FileOutput, RefreshCw, Crop, Lock, ChevronDown, Moon, Sun, ShieldCheck, Zap
 } from 'lucide-react';
+import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from '@clerk/clerk-react';
 
 // Original Tools
 import WatermarkTool from './components/WatermarkTool';
@@ -21,6 +22,8 @@ import PdfToJpgTool from './components/PdfToJpgTool';
 import ExtractPagesTool from './components/ExtractPagesTool';
 import OrganizePdfTool from './components/OrganizePdfTool';
 import CropPdfTool from './components/CropPdfTool';
+import CompressPdfTool from './components/CompressPdfTool';
+import RedactPdfTool from './components/RedactPdfTool';
 
 import Footer from './components/Footer';
 import CookieConsent from './components/CookieConsent';
@@ -31,8 +34,21 @@ import ContactUs from './components/ContactUs';
 
 function App() {
   const [installPrompt, setInstallPrompt] = React.useState(null);
+  const [isDarkMode, setIsDarkMode] = React.useState(() => {
+    return localStorage.getItem('theme') === 'dark' || false;
+  });
   const navigate = useNavigate();
   const location = useLocation();
+
+  React.useEffect(() => {
+    if (isDarkMode) {
+      document.body.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.body.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [isDarkMode]);
 
   React.useEffect(() => {
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -59,6 +75,7 @@ function App() {
         { path: '/remove-pages', name: 'Remove pages', desc: 'Remove pages from a PDF document. Select and remove the pages.', icon: <Trash2 />, component: <PageRemoverTool /> },
         { path: '/extract-pages', name: 'Extract pages', desc: 'Extract specific pages from a PDF to form a new document.', icon: <FileOutput />, component: <ExtractPagesTool /> },
         { path: '/organize-pdf', name: 'Organize PDF', desc: 'Sort, change order, or delete PDF pages easily.', icon: <RefreshCw />, component: <OrganizePdfTool /> },
+        { path: '/compress-pdf', name: 'Compress PDF', desc: 'Reduce file size while optimizing for maximal PDF quality.', icon: <DownloadCloud />, component: <CompressPdfTool /> },
       ]
     },
     {
@@ -87,6 +104,7 @@ function App() {
       title: "PDF SECURITY",
       tools: [
         { path: '/protect-pdf', name: 'Protect PDF', desc: 'Encrypt your PDF with a password to prevent unauthorized access.', icon: <Lock />, component: <ProtectPdfTool /> },
+        { path: '/redact-pdf', name: 'Redact PDF', desc: 'Permanently hide and blackout sensitive text and images.', icon: <Type />, component: <RedactPdfTool /> },
       ]
     }
   ];
@@ -97,6 +115,10 @@ function App() {
   const renderHome = () => (
     <>
       <section className="home-hero">
+        <div className="hero-badges">
+          <div className="hero-badge"><ShieldCheck size={16} /> 100% Secure & Private</div>
+          <div className="hero-badge"><Zap size={16} /> No File Size Limits</div>
+        </div>
         <h1>Every tool you need to work with PDFs in one place</h1>
         <p>All the tools you need to use PDFs, at your fingertips. All are 100% FREE and easy to use! Merge, split, compress, convert, rotate, unlock and watermark PDFs with just a few clicks.</p>
       </section>
@@ -131,6 +153,30 @@ function App() {
           </Link>
           <nav className="nav-links">
             <Link to="/" className={`nav-item ${location.pathname === '/' ? 'active' : ''}`}>Home</Link>
+            
+            <div className="nav-item dropdown">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                All tools <ChevronDown size={14} />
+              </div>
+              <div className="dropdown-content">
+                <div className="dropdown-menu-layout">
+                  {categories.map((category, idx) => (
+                    <div key={idx} className="dropdown-category">
+                      <h4>{category.title}</h4>
+                      <div className="dropdown-list">
+                        {category.tools.map(tool => (
+                          <Link key={tool.path} to={tool.path} className="dropdown-item">
+                            {React.cloneElement(tool.icon, { size: 16, strokeWidth: 2 })}
+                            {tool.name}
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             <Link to="/merge-pdf" className={`nav-item ${location.pathname === '/merge-pdf' ? 'active' : ''}`}>Merge</Link>
             <Link to="/split-pdf" className={`nav-item ${location.pathname === '/split-pdf' ? 'active' : ''}`}>Split</Link>
             <Link to="/jpg-to-pdf" className={`nav-item ${location.pathname === '/jpg-to-pdf' ? 'active' : ''}`}>JPG to PDF</Link>
@@ -138,14 +184,34 @@ function App() {
         </div>
         
         <div className="header-right">
+          <button 
+            className="icon-btn" 
+            onClick={() => setIsDarkMode(!isDarkMode)} 
+            style={{ marginRight: '1rem' }}
+            title="Toggle Dark Mode"
+          >
+            {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+          
           {installPrompt && (
             <button className="install-btn" onClick={handleInstall}>
               <DownloadCloud size={18} />
               <span>Install App</span>
             </button>
           )}
-          <button className="auth-btn login">Log in</button>
-          <button className="auth-btn signup">Sign up</button>
+          
+          <SignedOut>
+            <SignInButton mode="modal">
+              <button className="auth-btn login">Log in</button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <button className="auth-btn signup">Sign up</button>
+            </SignUpButton>
+          </SignedOut>
+
+          <SignedIn>
+            <UserButton afterSignOutUrl="/" appearance={{ elements: { userButtonAvatarBox: { width: 36, height: 36 } } }} />
+          </SignedIn>
         </div>
       </header>
 
