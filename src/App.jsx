@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
-  Droplets, Layers, Scissors, Hash, RotateCw, Image as ImageIcon, 
+  Droplets, Layers, Scissors, Hash, RotateCw, Image as ImageIcon,
   Trash2, DownloadCloud, Type, FileOutput, RefreshCw, Crop, Lock, ChevronDown, Moon, Sun, ShieldCheck, Zap, Menu, X, User
 } from 'lucide-react';
 import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from '@clerk/clerk-react';
@@ -120,10 +120,10 @@ function App() {
           <div className="hero-badge"><ShieldCheck size={16} /> 100% Secure & Private</div>
           <div className="hero-badge"><Zap size={16} /> No File Size Limits</div>
         </div>
-        <h1>Every tool you need to work with PDFs in one place</h1>
-        <p>All the tools you need to use PDFs, at your fingertips. All are 100% FREE and easy to use! Merge, split, compress, convert, rotate, unlock and watermark PDFs with just a few clicks.</p>
+        <h1>Simplify your PDF workflow with everything in one spot</h1>
+        <p>Powerful PDF tools made simple and free. Merge, split, compress, convert, rotate, unlock, and watermark your PDFs with just a few clicks.</p>
       </section>
-      
+
       <div className="tools-grid-container" style={{ paddingTop: '2rem' }}>
         {categories.map((category, index) => (
           <div key={index} style={{ marginBottom: '4rem' }}>
@@ -157,7 +157,7 @@ function App() {
           </Link>
           <nav className="nav-links">
             <Link to="/" className={`nav-item ${location.pathname === '/' ? 'active' : ''}`}>Home</Link>
-            
+
             <div className="nav-item dropdown">
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 All tools <ChevronDown size={14} />
@@ -186,24 +186,24 @@ function App() {
             <Link to="/jpg-to-pdf" className={`nav-item ${location.pathname === '/jpg-to-pdf' ? 'active' : ''}`}>JPG to PDF</Link>
           </nav>
         </div>
-        
+
         <div className="header-right">
-          <button 
-            className="icon-btn" 
-            onClick={() => setIsDarkMode(!isDarkMode)} 
+          <button
+            className="icon-btn"
+            onClick={() => setIsDarkMode(!isDarkMode)}
             style={{ marginRight: '1rem' }}
             title="Toggle Dark Mode"
           >
             {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
           </button>
-          
+
           {installPrompt && (
             <button className="install-btn" onClick={handleInstall}>
               <DownloadCloud size={18} />
               <span>Install App</span>
             </button>
           )}
-          
+
           <SignedOut>
             <SignInButton mode="modal">
               <button className="auth-btn login">Log in</button>
@@ -256,26 +256,26 @@ function App() {
           <Route path="/about" element={<AboutUs onBack={() => navigate('/')} />} />
           <Route path="/contact" element={<ContactUs onBack={() => navigate('/')} />} />
           <Route path="/image-to-pdf" element={<ImageToPdfTool />} /> {/* Legacy redirect mapping */}
-          
+
           {allTools.map(tool => (
-             <Route 
-               key={tool.path} 
-               path={tool.path} 
-               element={
-                 <div className="tool-container">
-                    <header className="page-header">
-                      <h1>{tool.name}</h1>
-                      <p className="subtitle">{tool.desc}</p>
-                    </header>
-                    {tool.component}
-                 </div>
-               } 
-             />
+            <Route
+              key={tool.path}
+              path={tool.path}
+              element={
+                <div className="tool-container">
+                  <header className="page-header">
+                    <h1>{tool.name}</h1>
+                    <p className="subtitle">{tool.desc}</p>
+                  </header>
+                  {tool.component}
+                </div>
+              }
+            />
           ))}
         </Routes>
       </main>
 
-      <Footer onLinkClick={(page) => { navigate('/' + page); window.scrollTo(0,0); }} />
+      <Footer onLinkClick={(page) => { navigate('/' + page); window.scrollTo(0, 0); }} />
       <CookieConsent />
     </div>
   );
