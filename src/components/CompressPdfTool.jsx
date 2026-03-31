@@ -14,6 +14,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 // Setup pdf.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const CompressPdfTool = () => {
     const [file, setFile] = useState(null);
     const [quality, setQuality] = useState(0.6); // Default to Medium (0.6)
@@ -137,9 +139,11 @@ const CompressPdfTool = () => {
                                     </div>
                                 )}
                             </div>
-                            <button className="action-btn" onClick={compressPDF} disabled={isProcessing}>
+                            <AuthDownloadWrapper>
+                                <button className="action-btn" onClick={compressPDF} disabled={isProcessing}>
                                 {isProcessing ? <><Loader2 className="animate-spin" /> Compressing...</> : <><Download size={20} /> Compress PDF</>}
                             </button>
+                            </AuthDownloadWrapper>
                             {complete && <div className="status-msg success"><CheckCircle2 size={16} /> PDF compressed successfully!</div>}
                             <p style={{ textAlign: 'center', marginTop: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                                 Note: Compression flattens the PDF, meaning text cannot be highlighted in the downloaded file.

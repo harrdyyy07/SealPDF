@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { PDFDocument } from 'pdf-lib';
 import { RefreshCw, Download, FileUp, ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const OrganizePdfTool = () => {
     const [file, setFile] = useState(null);
     const [pages, setPages] = useState([]); // [{ id, idx: original_index, deleted }]
@@ -140,9 +142,11 @@ const OrganizePdfTool = () => {
                             <div style={{ textAlign: 'center', padding: '2rem 0' }}>
                                 <RefreshCw size={48} color="#16a34a" style={{ marginBottom: '1rem' }} />
                                 <h2>PDF Organized Successfully!</h2>
+                                <AuthDownloadWrapper>
                                 <a href={organizedPdfUrl} download={`organized_${file.name}`} className="action-btn" style={{ textDecoration: 'none' }}>
                                     <Download /> Download PDF
                                 </a>
+                            </AuthDownloadWrapper>
                             </div>
                         )}
                     </div>

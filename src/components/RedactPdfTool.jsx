@@ -15,6 +15,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 // Setup pdf.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const RedactPdfTool = () => {
     const [file, setFile] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -220,14 +222,16 @@ const RedactPdfTool = () => {
                                 )}
                             </div>
 
-                            <button 
-                                className="action-btn" 
-                                onClick={redactPDF} 
-                                disabled={isProcessing || (!selection && !isDrawing)}
-                                style={{ maxWidth: '400px' }}
-                            >
-                                {isProcessing ? <><Loader2 className="animate-spin" /> Applied...</> : <><EyeOff size={20} /> Redact PDF</>}
-                            </button>
+                            <AuthDownloadWrapper>
+                                <button 
+                                    className="action-btn" 
+                                    onClick={redactPDF} 
+                                    disabled={isProcessing || (!selection && !isDrawing)}
+                                    style={{ maxWidth: '400px' }}
+                                >
+                                    {isProcessing ? <><Loader2 className="animate-spin" /> Applied...</> : <><EyeOff size={20} /> Redact PDF</>}
+                                </button>
+                            </AuthDownloadWrapper>
                             
                             {complete && <div className="status-msg success"><CheckCircle2 size={16} /> Redacted successfully! Note: For extreme security, also compress this PDF to permanently flatten the black boxes.</div>}
                         </div>

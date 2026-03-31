@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const PageNumbererTool = () => {
     const [file, setFile] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -111,9 +113,11 @@ const PageNumbererTool = () => {
                                 <Hash size={64} style={{ opacity: 0.2 }} />
                                 <p>Numbers will be added to all pages</p>
                             </div>
-                            <button className="action-btn" onClick={addPageNumbers} disabled={isProcessing}>
+                            <AuthDownloadWrapper>
+                                <button className="action-btn" onClick={addPageNumbers} disabled={isProcessing}>
                                 {isProcessing ? <><Loader2 className="animate-spin" /> Numbering...</> : <><Download size={20} /> Add Numbers & Download</>}
                             </button>
+                            </AuthDownloadWrapper>
                             {complete && <div className="status-msg success"><CheckCircle2 size={16} /> Numbered successfully!</div>}
                         </div>
                     )}

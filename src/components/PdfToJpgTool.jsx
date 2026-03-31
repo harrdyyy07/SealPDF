@@ -5,6 +5,8 @@ import { Image as ImageIcon, Download, FileUp } from 'lucide-react';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.mjs`;
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const PdfToJpgTool = () => {
     const [file, setFile] = useState(null);
     const [isConverting, setIsConverting] = useState(false);
@@ -123,9 +125,11 @@ const PdfToJpgTool = () => {
                                 <ImageIcon size={48} color="#16a34a" style={{ marginBottom: '1rem' }} />
                                 <h2>Conversion Complete!</h2>
                                 <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>Your JPG images are ready.</p>
+                                <AuthDownloadWrapper>
                                 <a href={zipUrl} download={`images_${file.name.replace('.pdf','')}.zip`} className="action-btn" style={{ textDecoration: 'none' }}>
                                     <Download /> Download ZIP
                                 </a>
+                            </AuthDownloadWrapper>
                             </div>
                         )}
                     </div>

@@ -32,6 +32,52 @@ import TermsOfService from './components/TermsOfService';
 import AboutUs from './components/AboutUs';
 import ContactUs from './components/ContactUs';
 
+const categories = [
+  {
+    title: "ORGANIZE PDF",
+    tools: [
+      { path: '/merge-pdf', name: 'Merge PDF', desc: 'Combine PDFs in the order you want with the easiest PDF merger.', icon: <Layers />, component: MergerTool },
+      { path: '/split-pdf', name: 'Split PDF', desc: 'Separate one page or a whole set for easy conversion.', icon: <Scissors />, component: SplitterTool },
+      { path: '/remove-pages', name: 'Remove pages', desc: 'Remove pages from a PDF document. Select and remove the pages.', icon: <Trash2 />, component: PageRemoverTool },
+      { path: '/extract-pages', name: 'Extract pages', desc: 'Extract specific pages from a PDF to form a new document.', icon: <FileOutput />, component: ExtractPagesTool },
+      { path: '/organize-pdf', name: 'Organize PDF', desc: 'Sort, change order, or delete PDF pages easily.', icon: <RefreshCw />, component: OrganizePdfTool },
+      { path: '/compress-pdf', name: 'Compress PDF', desc: 'Reduce file size while optimizing for maximal PDF quality.', icon: <DownloadCloud />, component: CompressPdfTool },
+    ]
+  },
+  {
+    title: "CONVERT TO PDF",
+    tools: [
+      { path: '/jpg-to-pdf', name: 'JPG to PDF', desc: 'Convert JPG images to PDF in seconds. Easily adjust orientation and margins.', icon: <ImageIcon />, component: ImageToPdfTool },
+    ]
+  },
+  {
+    title: "CONVERT FROM PDF",
+    tools: [
+      { path: '/pdf-to-jpg', name: 'PDF to JPG', desc: 'Convert each PDF page into a JPG or extract all images contained in a PDF.', icon: <ImageIcon />, component: PdfToJpgTool },
+    ]
+  },
+  {
+    title: "EDIT PDF",
+    tools: [
+      { path: '/rotate-pdf', name: 'Rotate PDF', desc: 'Rotate your PDFs the way you need them.', icon: <RotateCw />, component: PageRotatorTool },
+      { path: '/page-numbers', name: 'Add page numbers', desc: 'Add page numbers into PDFs with ease. Choose your positions and dimensions.', icon: <Hash />, component: PageNumbererTool },
+      { path: '/watermark-pdf', name: 'Add watermark', desc: 'Stamp an image or text over your PDF in seconds.', icon: <Droplets />, component: WatermarkTool },
+      { path: '/crop-pdf', name: 'Crop PDF', desc: 'Crop PDF margins, change PDF page size.', icon: <Crop />, component: CropPdfTool },
+      { path: '/edit-pdf', name: 'Edit PDF', desc: 'Add text, images, shapes or freehand annotations to a PDF document.', icon: <Type />, component: EditorTool },
+    ]
+  },
+  {
+    title: "PDF SECURITY",
+    tools: [
+      { path: '/protect-pdf', name: 'Protect PDF', desc: 'Encrypt your PDF with a password to prevent unauthorized access.', icon: <Lock />, component: ProtectPdfTool },
+      { path: '/redact-pdf', name: 'Redact PDF', desc: 'Permanently hide and blackout sensitive text and images.', icon: <Type />, component: RedactPdfTool },
+    ]
+  }
+];
+
+// Flatten tools for routing mapping
+const allTools = categories.flatMap(cat => cat.tools);
+
 function App() {
   const [installPrompt, setInstallPrompt] = React.useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
@@ -67,51 +113,6 @@ function App() {
     }
   };
 
-  const categories = [
-    {
-      title: "ORGANIZE PDF",
-      tools: [
-        { path: '/merge-pdf', name: 'Merge PDF', desc: 'Combine PDFs in the order you want with the easiest PDF merger.', icon: <Layers />, component: <MergerTool /> },
-        { path: '/split-pdf', name: 'Split PDF', desc: 'Separate one page or a whole set for easy conversion.', icon: <Scissors />, component: <SplitterTool /> },
-        { path: '/remove-pages', name: 'Remove pages', desc: 'Remove pages from a PDF document. Select and remove the pages.', icon: <Trash2 />, component: <PageRemoverTool /> },
-        { path: '/extract-pages', name: 'Extract pages', desc: 'Extract specific pages from a PDF to form a new document.', icon: <FileOutput />, component: <ExtractPagesTool /> },
-        { path: '/organize-pdf', name: 'Organize PDF', desc: 'Sort, change order, or delete PDF pages easily.', icon: <RefreshCw />, component: <OrganizePdfTool /> },
-        { path: '/compress-pdf', name: 'Compress PDF', desc: 'Reduce file size while optimizing for maximal PDF quality.', icon: <DownloadCloud />, component: <CompressPdfTool /> },
-      ]
-    },
-    {
-      title: "CONVERT TO PDF",
-      tools: [
-        { path: '/jpg-to-pdf', name: 'JPG to PDF', desc: 'Convert JPG images to PDF in seconds. Easily adjust orientation and margins.', icon: <ImageIcon />, component: <ImageToPdfTool /> },
-      ]
-    },
-    {
-      title: "CONVERT FROM PDF",
-      tools: [
-        { path: '/pdf-to-jpg', name: 'PDF to JPG', desc: 'Convert each PDF page into a JPG or extract all images contained in a PDF.', icon: <ImageIcon />, component: <PdfToJpgTool /> },
-      ]
-    },
-    {
-      title: "EDIT PDF",
-      tools: [
-        { path: '/rotate-pdf', name: 'Rotate PDF', desc: 'Rotate your PDFs the way you need them.', icon: <RotateCw />, component: <PageRotatorTool /> },
-        { path: '/page-numbers', name: 'Add page numbers', desc: 'Add page numbers into PDFs with ease. Choose your positions and dimensions.', icon: <Hash />, component: <PageNumbererTool /> },
-        { path: '/watermark-pdf', name: 'Add watermark', desc: 'Stamp an image or text over your PDF in seconds.', icon: <Droplets />, component: <WatermarkTool /> },
-        { path: '/crop-pdf', name: 'Crop PDF', desc: 'Crop PDF margins, change PDF page size.', icon: <Crop />, component: <CropPdfTool /> },
-        { path: '/edit-pdf', name: 'Edit PDF', desc: 'Add text, images, shapes or freehand annotations to a PDF document.', icon: <Type />, component: <EditorTool /> },
-      ]
-    },
-    {
-      title: "PDF SECURITY",
-      tools: [
-        { path: '/protect-pdf', name: 'Protect PDF', desc: 'Encrypt your PDF with a password to prevent unauthorized access.', icon: <Lock />, component: <ProtectPdfTool /> },
-        { path: '/redact-pdf', name: 'Redact PDF', desc: 'Permanently hide and blackout sensitive text and images.', icon: <Type />, component: <RedactPdfTool /> },
-      ]
-    }
-  ];
-
-  // Flatten tools for routing mapping
-  const allTools = categories.flatMap(cat => cat.tools);
 
   const renderHome = () => (
     <>
@@ -205,10 +206,10 @@ function App() {
           )}
 
           <SignedOut>
-            <SignInButton mode="modal">
+            <SignInButton mode="modal" afterSignInUrl={location.pathname} afterSignUpUrl={location.pathname}>
               <button className="auth-btn login">Log in</button>
             </SignInButton>
-            <SignUpButton mode="modal">
+            <SignUpButton mode="modal" afterSignInUrl={location.pathname} afterSignUpUrl={location.pathname}>
               <button className="auth-btn signup">
                 <span className="signup-text">Sign up</span>
                 <User className="signup-icon" size={20} />
@@ -267,7 +268,7 @@ function App() {
                     <h1>{tool.name}</h1>
                     <p className="subtitle">{tool.desc}</p>
                   </header>
-                  {tool.component}
+                  <tool.component />
                 </div>
               }
             />

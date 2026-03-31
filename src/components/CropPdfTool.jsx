@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { PDFDocument } from 'pdf-lib';
 import { Crop, Download, FileUp } from 'lucide-react';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const CropPdfTool = () => {
     const [file, setFile] = useState(null);
     const [margins, setMargins] = useState({ top: 10, bottom: 10, left: 10, right: 10 });
@@ -118,9 +120,11 @@ const CropPdfTool = () => {
                                 <Crop size={48} color="#16a34a" style={{ marginBottom: '1rem' }} />
                                 <h2>PDF Cropped!</h2>
                                 <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>Your new PDF is ready to download.</p>
+                                <AuthDownloadWrapper>
                                 <a href={croppedPdfUrl} download={`cropped_${file.name}`} className="action-btn" style={{ textDecoration: 'none' }}>
                                     <Download /> Download Cropped PDF
                                 </a>
+                            </AuthDownloadWrapper>
                             </div>
                         )}
                     </div>

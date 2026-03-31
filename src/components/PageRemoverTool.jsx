@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const PageRemoverTool = () => {
     const [file, setFile] = useState(null);
     const [pagesToRemove, setPagesToRemove] = useState('');
@@ -97,9 +99,11 @@ const PageRemoverTool = () => {
                                 <Trash2 size={64} style={{ opacity: 0.2 }} />
                                 <p>Specific pages will be permanently removed</p>
                             </div>
-                            <button className="action-btn" onClick={removePages} disabled={isProcessing || !pagesToRemove.trim()} style={{ background: 'linear-gradient(to right, #ef4444, #f87171)' }}>
+                            <AuthDownloadWrapper buttonStyle={{ background: 'linear-gradient(to right, #ef4444, #f87171)' }}>
+                                <button className="action-btn" onClick={removePages} disabled={isProcessing || !pagesToRemove.trim()} style={{ background: 'linear-gradient(to right, #ef4444, #f87171)' }}>
                                 {isProcessing ? <><Loader2 className="animate-spin" /> Removing...</> : <><Trash2 size={20} /> Remove Pages & Download</>}
                             </button>
+                            </AuthDownloadWrapper>
                             {complete && <div className="status-msg success"><CheckCircle2 size={16} /> Pages removed successfully!</div>}
                         </div>
                     )}

@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const SplitterTool = () => {
     const [file, setFile] = useState(null);
     const [pages, setPages] = useState('');
@@ -94,9 +96,11 @@ const SplitterTool = () => {
                                 <Scissors size={64} style={{ opacity: 0.2 }} />
                                 <p>Enter page numbers to extract</p>
                             </div>
-                            <button className="action-btn" onClick={splitPDF} disabled={isProcessing || !pages.trim()}>
+                            <AuthDownloadWrapper>
+                                <button className="action-btn" onClick={splitPDF} disabled={isProcessing || !pages.trim()}>
                                 {isProcessing ? <><Loader2 className="animate-spin" /> Extracting...</> : <><Download size={20} /> Extract & Download</>}
                             </button>
+                            </AuthDownloadWrapper>
                             {complete && <div className="status-msg success"><CheckCircle2 size={16} /> Pages extracted successfully!</div>}
                         </div>
                     )}

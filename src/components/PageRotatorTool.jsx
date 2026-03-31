@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { PDFDocument, degrees } from 'pdf-lib';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const PageRotatorTool = () => {
     const [file, setFile] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -91,9 +93,11 @@ const PageRotatorTool = () => {
                                 <RotateCw size={64} style={{ opacity: 0.2 }} />
                                 <p>Pages will be rotated by {rotation}°</p>
                             </div>
-                            <button className="action-btn" onClick={rotatePDF} disabled={isProcessing}>
+                            <AuthDownloadWrapper>
+                                <button className="action-btn" onClick={rotatePDF} disabled={isProcessing}>
                                 {isProcessing ? <><Loader2 className="animate-spin" /> Rotating...</> : <><Download size={20} /> Rotate & Download</>}
                             </button>
+                            </AuthDownloadWrapper>
                             {complete && <div className="status-msg success"><CheckCircle2 size={16} /> Rotated successfully!</div>}
                         </div>
                     )}

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { PDFDocument } from 'pdf-lib';
 import { FileOutput, Download, FileUp } from 'lucide-react';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const ExtractPagesTool = () => {
     const [file, setFile] = useState(null);
     const [pageRanges, setPageRanges] = useState('');
@@ -123,9 +125,11 @@ const ExtractPagesTool = () => {
                                 <FileOutput size={48} color="#16a34a" style={{ marginBottom: '1rem' }} />
                                 <h2>Pages Extracted!</h2>
                                 <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>Your new PDF is ready to download.</p>
+                                <AuthDownloadWrapper>
                                 <a href={extractedPdfUrl} download={`extracted_${file.name}`} className="action-btn" style={{ textDecoration: 'none' }}>
                                     <Download /> Download PDF
                                 </a>
+                            </AuthDownloadWrapper>
                             </div>
                         )}
                     </div>

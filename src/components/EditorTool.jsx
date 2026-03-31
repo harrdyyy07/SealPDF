@@ -31,6 +31,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pkg from 'pdfjs-dist/package.json';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pkg.version}/pdf.worker.min.mjs`;
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const EditorTool = () => {
     const [file, setFile] = useState(null);
     const [numPages, setNumPages] = useState(0);
@@ -411,10 +413,12 @@ const EditorTool = () => {
 
                 <div className="top-bar-right">
                     <div className="divider" />
-                    <button className="export-action-btn" onClick={exportPdf} disabled={isProcessing || !file}>
+                    <AuthDownloadWrapper buttonClass="export-action-btn">
+                                <button className="export-action-btn" onClick={exportPdf} disabled={isProcessing || !file}>
                         {isProcessing ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
                         <span>Export</span>
                     </button>
+                            </AuthDownloadWrapper>
                 </div>
             </div>
 

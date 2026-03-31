@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const ImageToPdfTool = () => {
     const [images, setImages] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -99,9 +101,11 @@ const ImageToPdfTool = () => {
                     </div>
 
                     {images.length > 0 && (
-                        <button className="action-btn" onClick={convertToPdf} disabled={isProcessing}>
+                        <AuthDownloadWrapper>
+                                <button className="action-btn" onClick={convertToPdf} disabled={isProcessing}>
                             {isProcessing ? <><Loader2 className="animate-spin" /> Converting...</> : <><Download size={20} /> Convert & Download</>}
                         </button>
+                            </AuthDownloadWrapper>
                     )}
 
                     {complete && <div className="status-msg success"><CheckCircle2 size={16} /> Images converted successfully!</div>}

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { PDFDocument } from 'pdf-lib';
 import { Lock, Download, FileUp } from 'lucide-react';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const ProtectPdfTool = () => {
     const [file, setFile] = useState(null);
     const [password, setPassword] = useState('');
@@ -110,9 +112,11 @@ const ProtectPdfTool = () => {
                                 <Lock size={48} color="#16a34a" style={{ marginBottom: '1rem' }} />
                                 <h2>Your PDF is secure!</h2>
                                 <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>Download the encrypted file below.</p>
+                                <AuthDownloadWrapper>
                                 <a href={protectedPdf} download={`protected_${file.name}`} className="action-btn" style={{ textDecoration: 'none' }}>
                                     <Download /> Download Protected PDF
                                 </a>
+                            </AuthDownloadWrapper>
                             </div>
                         )}
                     </div>

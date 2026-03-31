@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const WatermarkTool = () => {
     const [file, setFile] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -165,9 +167,11 @@ const WatermarkTool = () => {
                                 <FileText size={64} style={{ opacity: 0.2 }} />
                                 <p>Watermark will be applied to all pages</p>
                             </div>
-                            <button className="action-btn" onClick={addWatermark} disabled={isProcessing || (type === 'image' && !image)}>
+                            <AuthDownloadWrapper>
+                                <button className="action-btn" onClick={addWatermark} disabled={isProcessing || (type === 'image' && !image)}>
                                 {isProcessing ? <><Loader2 className="animate-spin" /> Processing...</> : <><Download size={20} /> Add Watermark & Download</>}
                             </button>
+                            </AuthDownloadWrapper>
                             {complete && <div className="status-msg success"><CheckCircle2 size={16} /> Downloaded successfully!</div>}
                         </div>
                     )}

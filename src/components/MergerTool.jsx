@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
 
+import AuthDownloadWrapper from './AuthDownloadWrapper';
+
 const MergerTool = () => {
     const [files, setFiles] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -94,9 +96,11 @@ const MergerTool = () => {
                     </div>
 
                     {files.length >= 2 && (
-                        <button className="action-btn" onClick={mergePDFs} disabled={isProcessing}>
+                        <AuthDownloadWrapper>
+                                <button className="action-btn" onClick={mergePDFs} disabled={isProcessing}>
                             {isProcessing ? <><Loader2 className="animate-spin" /> Merging...</> : <><Download size={20} /> Merge & Download</>}
                         </button>
+                            </AuthDownloadWrapper>
                     )}
 
                     {complete && <div className="status-msg success"><CheckCircle2 size={16} /> PDFs merged successfully!</div>}
