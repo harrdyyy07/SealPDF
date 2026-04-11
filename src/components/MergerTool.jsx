@@ -12,6 +12,7 @@ import {
 import { PDFDocument } from 'pdf-lib';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
 
 const MergerTool = () => {
     const [files, setFiles] = useState([]);
@@ -106,6 +107,7 @@ const MergerTool = () => {
                     {complete && <div className="status-msg success"><CheckCircle2 size={16} /> PDFs merged successfully!</div>}
                 </section>
             </div>
+            <MarketingSection toolId="merge" />
         </div>
     );
 };

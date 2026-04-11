@@ -13,6 +13,8 @@ import {
 import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
+
 
 const WatermarkTool = () => {
     const [file, setFile] = useState(null);
@@ -28,6 +30,37 @@ const WatermarkTool = () => {
     const [fontSize, setFontSize] = useState(50);
     const [color, setColor] = useState('#6366f1');
     const [rotation, setRotation] = useState(-45);
+    const [pageRange, setPageRange] = useState('');
+
+    const parsePageRange = (rangeStr, totalPages) => {
+        if (!rangeStr || rangeStr.trim() === '') {
+            return Array.from({ length: totalPages }, (_, i) => i);
+        }
+
+        const pages = new Set();
+        const parts = rangeStr.split(',');
+
+        parts.forEach(part => {
+            const trimmed = part.trim();
+            if (trimmed.includes('-')) {
+                const rangeParts = trimmed.split('-');
+                const start = parseInt(rangeParts[0]?.trim());
+                const end = parseInt(rangeParts[1]?.trim());
+                if (!isNaN(start) && !isNaN(end)) {
+                    for (let i = Math.min(start, end); i <= Math.max(start, end); i++) {
+                        if (i >= 1 && i <= totalPages) pages.add(i - 1);
+                    }
+                }
+            } else {
+                const num = parseInt(trimmed);
+                if (!isNaN(num) && num >= 1 && num <= totalPages) {
+                    pages.add(num - 1);
+                }
+            }
+        });
+
+        return Array.from(pages).sort((a, b) => a - b);
+    };
 
     const onFileChange = (e) => {
         const selectedFile = e.target.files[0];
@@ -63,7 +96,12 @@ const WatermarkTool = () => {
             const fileBuffer = await file.arrayBuffer();
             const pdfDoc = await PDFDocument.load(fileBuffer, { ignoreEncryption: true });
             const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-            const pages = pdfDoc.getPages();
+            const allPages = pdfDoc.getPages();
+            const targetIndices = parsePageRange(pageRange, allPages.length);
+
+            if (targetIndices.length === 0) {
+                throw new Error("No valid pages selected for watermark.");
+            }
 
             let watermarkImage = null;
             if (type === 'image' && image) {
@@ -74,7 +112,8 @@ const WatermarkTool = () => {
                 }
             }
 
-            for (const page of pages) {
+            for (const index of targetIndices) {
+                const page = allPages[index];
                 const { width, height } = page.getSize();
                 if (type === 'text') {
                     const textWidth = font.widthOfTextAtSize(text, parseFloat(fontSize));
@@ -165,7 +204,7 @@ const WatermarkTool = () => {
                             </div>
                             <div className="preview-placeholder">
                                 <FileText size={64} style={{ opacity: 0.2 }} />
-                                <p>Watermark will be applied to all pages</p>
+                                <p>Watermark will be applied to selected pages</p>
                             </div>
                             <AuthDownloadWrapper>
                                 <button className="action-btn" onClick={addWatermark} disabled={isProcessing || (type === 'image' && !image)}>
@@ -227,9 +266,22 @@ const WatermarkTool = () => {
                             <div className="label-row"><label>Rotation</label><span>{rotation}°</span></div>
                             <input type="range" min="-180" max="180" value={rotation} onChange={(e) => setRotation(e.target.value)} />
                         </div>
+                        <div className="control-item">
+                            <label>Apply to Pages</label>
+                            <input
+                                type="text"
+                                value={pageRange}
+                                onChange={(e) => setPageRange(e.target.value)}
+                                placeholder="e.g. 1-5, 8, 11-13"
+                            />
+                            <p style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                Leave blank to apply to all pages.
+                            </p>
+                        </div>
                     </div>
                 </aside>
             </main>
+            <MarketingSection toolId="watermark" />
         </div>
     );
 };

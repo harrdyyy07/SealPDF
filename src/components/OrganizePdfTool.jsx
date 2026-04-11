@@ -3,6 +3,8 @@ import { PDFDocument } from 'pdf-lib';
 import { RefreshCw, Download, FileUp, ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
+
 
 const OrganizePdfTool = () => {
     const [file, setFile] = useState(null);
@@ -152,6 +154,7 @@ const OrganizePdfTool = () => {
                     </div>
                 )}
             </div>
+            <MarketingSection toolId="organize" />
         </div>
     );
 };

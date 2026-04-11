@@ -3,6 +3,8 @@ import { PDFDocument } from 'pdf-lib';
 import { Lock, Download, FileUp } from 'lucide-react';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
+
 
 const ProtectPdfTool = () => {
     const [file, setFile] = useState(null);
@@ -122,6 +124,7 @@ const ProtectPdfTool = () => {
                     </div>
                 )}
             </div>
+            <MarketingSection toolId="protect" />
         </div>
     );
 };

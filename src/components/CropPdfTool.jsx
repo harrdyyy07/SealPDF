@@ -3,6 +3,8 @@ import { PDFDocument } from 'pdf-lib';
 import { Crop, Download, FileUp } from 'lucide-react';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
+
 
 const CropPdfTool = () => {
     const [file, setFile] = useState(null);
@@ -130,6 +132,7 @@ const CropPdfTool = () => {
                     </div>
                 )}
             </div>
+            <MarketingSection toolId="crop" />
         </div>
     );
 };

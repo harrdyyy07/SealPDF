@@ -3,6 +3,8 @@ import { PDFDocument } from 'pdf-lib';
 import { FileOutput, Download, FileUp } from 'lucide-react';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
+
 
 const ExtractPagesTool = () => {
     const [file, setFile] = useState(null);
@@ -135,6 +137,7 @@ const ExtractPagesTool = () => {
                     </div>
                 )}
             </div>
+            <MarketingSection toolId="extract" />
         </div>
     );
 };

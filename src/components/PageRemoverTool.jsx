@@ -10,6 +10,7 @@ import {
 import { PDFDocument } from 'pdf-lib';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
 
 const PageRemoverTool = () => {
     const [file, setFile] = useState(null);
@@ -130,6 +131,7 @@ const PageRemoverTool = () => {
                     </div>
                 </aside>
             </main>
+            <MarketingSection toolId="remover" />
         </div>
     );
 };

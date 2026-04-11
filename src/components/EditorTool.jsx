@@ -32,6 +32,7 @@ import pkg from 'pdfjs-dist/package.json';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pkg.version}/pdf.worker.min.mjs`;
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
 
 const EditorTool = () => {
     const [file, setFile] = useState(null);
@@ -584,6 +585,7 @@ const EditorTool = () => {
             </div>
 
             <input type="file" id="image-upload-helper" hidden accept="image/*" onChange={onImageSelect} />
+            <MarketingSection toolId="editor" />
 
             <style>{`
                 .workspace-container { display: flex; flex-direction: column; height: calc(100vh - 120px); background: #111827; border-radius: 16px; overflow: hidden; position: relative; }

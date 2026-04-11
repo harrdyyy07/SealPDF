@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Droplets, Layers, Scissors, Hash, RotateCw, Image as ImageIcon,
-  Trash2, DownloadCloud, Type, FileOutput, RefreshCw, Crop, Lock, ChevronDown, Moon, Sun, ShieldCheck, Zap, Menu, X, User
+  Trash2, DownloadCloud, Type, FileOutput, RefreshCw, Crop, Lock, ChevronDown, Moon, Sun, ShieldCheck, Zap, Menu, X, User, Eraser
 } from 'lucide-react';
 import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from '@clerk/clerk-react';
 
@@ -24,6 +24,7 @@ import OrganizePdfTool from './components/OrganizePdfTool';
 import CropPdfTool from './components/CropPdfTool';
 import CompressPdfTool from './components/CompressPdfTool';
 import RedactPdfTool from './components/RedactPdfTool';
+import WatermarkRemoverTool from './components/WatermarkRemoverTool';
 
 import Footer from './components/Footer';
 import CookieConsent from './components/CookieConsent';
@@ -64,6 +65,7 @@ const categories = [
       { path: '/watermark-pdf', name: 'Add watermark', desc: 'Stamp an image or text over your PDF in seconds.', icon: <Droplets />, component: WatermarkTool },
       { path: '/crop-pdf', name: 'Crop PDF', desc: 'Crop PDF margins, change PDF page size.', icon: <Crop />, component: CropPdfTool },
       { path: '/edit-pdf', name: 'Edit PDF', desc: 'Add text, images, shapes or freehand annotations to a PDF document.', icon: <Type />, component: EditorTool },
+      { path: '/remove-watermark', name: 'Remove Watermark', desc: 'True watermark removal: identifies and deletes recurring objects from PDF data.', icon: <Eraser />, component: WatermarkRemoverTool },
     ]
   },
   {

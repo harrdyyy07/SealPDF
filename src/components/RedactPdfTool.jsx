@@ -16,6 +16,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
+
 
 const RedactPdfTool = () => {
     const [file, setFile] = useState(null);
@@ -238,6 +240,7 @@ const RedactPdfTool = () => {
                     )}
                 </section>
             </main>
+            <MarketingSection toolId="redact" />
         </div>
     );
 };

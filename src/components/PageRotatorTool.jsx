@@ -12,6 +12,7 @@ import {
 import { PDFDocument, degrees } from 'pdf-lib';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
 
 const PageRotatorTool = () => {
     const [file, setFile] = useState(null);
@@ -128,6 +129,7 @@ const PageRotatorTool = () => {
                     </div>
                 </aside>
             </main>
+            <MarketingSection toolId="rotate" />
         </div>
     );
 };

@@ -10,6 +10,7 @@ import {
 import { PDFDocument } from 'pdf-lib';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
 
 const ImageToPdfTool = () => {
     const [images, setImages] = useState([]);
@@ -111,6 +112,7 @@ const ImageToPdfTool = () => {
                     {complete && <div className="status-msg success"><CheckCircle2 size={16} /> Images converted successfully!</div>}
                 </section>
             </div>
+            <MarketingSection toolId="img2pdf" />
         </div>
     );
 };

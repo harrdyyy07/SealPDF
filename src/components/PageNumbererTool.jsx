@@ -11,6 +11,7 @@ import {
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
 
 const PageNumbererTool = () => {
     const [file, setFile] = useState(null);
@@ -160,6 +161,7 @@ const PageNumbererTool = () => {
                     </div>
                 </aside>
             </main>
+            <MarketingSection toolId="numberer" />
         </div>
     );
 };

@@ -6,6 +6,8 @@ import { Image as ImageIcon, Download, FileUp } from 'lucide-react';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.mjs`;
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
+
 
 const PdfToJpgTool = () => {
     const [file, setFile] = useState(null);
@@ -135,6 +137,7 @@ const PdfToJpgTool = () => {
                     </div>
                 )}
             </div>
+            <MarketingSection toolId="pdf2jpg" />
         </div>
     );
 };

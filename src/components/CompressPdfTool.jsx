@@ -15,6 +15,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
+
 
 const CompressPdfTool = () => {
     const [file, setFile] = useState(null);
@@ -187,6 +189,7 @@ const CompressPdfTool = () => {
                     </div>
                 </aside>
             </main>
+            <MarketingSection toolId="compress" />
         </div>
     );
 };

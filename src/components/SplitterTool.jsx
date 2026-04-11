@@ -10,6 +10,8 @@ import {
 import { PDFDocument } from 'pdf-lib';
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
+import MarketingSection from './MarketingSection';
+
 
 const SplitterTool = () => {
     const [file, setFile] = useState(null);
