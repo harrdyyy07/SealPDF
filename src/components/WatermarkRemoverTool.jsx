@@ -11,7 +11,7 @@ import {
     AlertCircle,
     Info
 } from 'lucide-react';
-import { PDFDocument, PDFName, PDFRawStream, PDFArray } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFRawStream, PDFArray, PDFDict } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 
 // Setup pdf.js worker
@@ -70,34 +70,44 @@ const WatermarkRemoverTool = () => {
             // Recursive XObject Scanner with Circular Protection
             const scanResources = (resources) => {
                 if (!resources) return;
-                const xObjects = resources.get(PDFName.of('XObject'));
-                if (!xObjects || !(xObjects.entries)) return;
+                try {
+                    const resolvedRes = pdfDoc.context.lookup(resources);
+                    if (!resolvedRes || typeof resolvedRes.get !== 'function') return;
 
-                for (const [name, ref] of xObjects.entries()) {
-                    const refStr = ref.toString();
-                    const nameStr = name.decodeText();
+                    const xObjectsObj = resolvedRes.get(PDFName.of('XObject'));
+                    if (!xObjectsObj) return;
                     
-                    if (!objectUsage.has(refStr)) {
-                        objectUsage.set(refStr, { name: nameStr, count: 0, type: 'XObject' });
+                    const xObjects = pdfDoc.context.lookup(xObjectsObj);
+                    if (!xObjects || typeof xObjects.entries !== 'function') return;
+
+                    for (const [name, ref] of xObjects.entries()) {
+                        const refStr = ref.toString();
+                        const nameStr = name instanceof PDFName ? name.decodeText() : 'Unknown';
                         
-                        // Deep scan if it's a Form XObject and not visited
-                        if (!visitedRefs.has(refStr)) {
-                            visitedRefs.add(refStr);
-                            try {
-                                const xObj = pdfDoc.context.lookup(ref);
-                                if (xObj instanceof PDFRawStream) {
-                                    const subtype = xObj.dict.get(PDFName.of('Subtype'));
-                                    if (subtype === PDFName.of('Form')) {
-                                        const nestedRes = xObj.dict.get(PDFName.of('Resources'));
-                                        if (nestedRes) scanResources(pdfDoc.context.lookup(nestedRes));
+                        if (!objectUsage.has(refStr)) {
+                            objectUsage.set(refStr, { name: nameStr, count: 0, type: 'XObject' });
+                            
+                            // Deep scan if it's a Form XObject and not visited
+                            if (!visitedRefs.has(refStr)) {
+                                visitedRefs.add(refStr);
+                                try {
+                                    const xObj = pdfDoc.context.lookup(ref);
+                                    if (xObj instanceof PDFRawStream) {
+                                        const subtype = xObj.dict.get(PDFName.of('Subtype'));
+                                        if (subtype === PDFName.of('Form')) {
+                                            const nestedRes = xObj.dict.get(PDFName.of('Resources'));
+                                            if (nestedRes) scanResources(nestedRes);
+                                        }
                                     }
-                                }
-                            } catch (e) {}
+                                } catch (e) {}
+                            }
                         }
+                        
+                        const data = objectUsage.get(refStr);
+                        if (data) data.count++;
                     }
-                    
-                    const data = objectUsage.get(refStr);
-                    data.count++;
+                } catch (err) {
+                    console.warn("Resource scan skipped for one branch", err);
                 }
             };
 
@@ -105,7 +115,7 @@ const WatermarkRemoverTool = () => {
                 const page = pages[i];
                 const annots = pdfDoc.context.lookup(page.node.get(PDFName.of('Annots')));
                 if (annots instanceof PDFArray) totalAnnotations += annots.size();
-                scanResources(page.node.normalizedEntries().Resources);
+                scanResources(page.node.get(PDFName.of('Resources')));
             }
 
             // --- SCAN TEXT (Diverse Sampling) ---
@@ -228,156 +238,206 @@ const WatermarkRemoverTool = () => {
                 for (const page of pages) page.node.delete(PDFName.of('Annots'));
             }
 
-            // 3. Process Chosen XObjects with Circular Protection
-            const visitedSwapRefs = new Set();
+            // 3. Process Chosen XObjects — delete from resources + collect names for Do-removal
+            const xDoNamesToRemove = new Set(); // XObject /names whose Do calls must be stripped
             if (selectedObjects.size > 0) {
                 const targetRefs = new Set(Array.from(selectedObjects));
-                const transparentPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mP8/5+hAAGMAAMMDvPQnAAAAABJRU5ErkJggg==';
-                const replacementImage = await pdfDoc.embedPng(transparentPng);
-
-                const swapResources = (resources) => {
-                    if (!resources) return;
-                    const xObjectsDict = resources.get(PDFName.of('XObject'));
-                    if (!xObjectsDict || !(xObjectsDict.entries)) return;
-
-                    for (const [name, ref] of xObjectsDict.entries()) {
-                        const refStr = ref.toString();
-                        if (targetRefs.has(refStr)) {
-                            xObjectsDict.set(name, replacementImage.ref);
-                        } else if (!visitedSwapRefs.has(refStr)) {
-                            visitedSwapRefs.add(refStr);
-                            try {
-                                const xObj = pdfDoc.context.lookup(ref);
-                                if (xObj instanceof PDFRawStream && xObj.dict.get(PDFName.of('Subtype')) === PDFName.of('Form')) {
-                                    const nestedRes = xObj.dict.get(PDFName.of('Resources'));
-                                    if (nestedRes) swapResources(pdfDoc.context.lookup(nestedRes));
-                                }
-                            } catch (e) {}
-                        }
-                    }
-                };
-
                 for (const page of pages) {
-                    swapResources(page.node.normalizedEntries().Resources);
+                    try {
+                        const resRef = page.node.get(PDFName.of('Resources'));
+                        if (!resRef) continue;
+                        const res = pdfDoc.context.lookup(resRef);
+                        if (!res || typeof res.get !== 'function') continue;
+                        const xobjRef = res.get(PDFName.of('XObject'));
+                        if (!xobjRef) continue;
+                        const xobjDict = pdfDoc.context.lookup(xobjRef);
+                        if (!xobjDict || typeof xobjDict.entries !== 'function') continue;
+                        const toDelete = [];
+                        for (const [name, ref] of xobjDict.entries()) {
+                            if (targetRefs.has(ref.toString())) {
+                                const nameStr = name instanceof PDFName ? name.decodeText() : name.toString();
+                                xDoNamesToRemove.add(nameStr);
+                                toDelete.push(name);
+                            }
+                        }
+                        for (const name of toDelete) xobjDict.delete(name);
+                    } catch(e) {}
                 }
             }
 
-            // 4. Trace & Scrub Text Content
+            // 4. TRUE TEXT ERASURE — PDF Content Stream Operator Parser
             const finalTargetTextList = Array.from(selectedText);
             if (targetText.trim()) finalTargetTextList.push(targetText.trim());
 
             if (finalTargetTextList.length > 0) {
-                const targetStrsNoSpace = finalTargetTextList.map(t => t.toLowerCase().replace(/\s+/g, ''));
-                const originalRegexes = finalTargetTextList.map(t => {
-                    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    return new RegExp('\\((?:' + escaped + ')\\)\\s*[TjTJ]', 'ig');
-                });
+                const normalizedTargets = finalTargetTextList.map(t => t.toLowerCase().trim()).filter(Boolean);
 
-                const scrubStream = async (stream) => {
-                    try {
-                        const data = stream.contents;
-                        const decompressed = await decompressStream(data);
-                        let contentStr = new TextDecoder().decode(decompressed);
-                        let modified = false;
-
-                        // 1. Classic Full Match Replace
-                        for (const reg of originalRegexes) {
-                            if (reg.test(contentStr)) {
-                                contentStr = contentStr.replace(reg, '() Tj');
-                                modified = true;
-                            }
-                        }
-
-                        // 2. Token Mapper (Aggressive Character Stripping)
-                        let virtualString = '';
-                        let indexMap = [];
-                        let inString = false;
-                        let escapeNext = false;
-                        let parenDepth = 0;
-                        
-                        for (let i = 0; i < contentStr.length; i++) {
-                            const char = contentStr[i];
-                            if (escapeNext) {
-                                if (inString && !/\s/.test(char)) {
-                                    virtualString += char.toLowerCase();
-                                    indexMap.push(i);
-                                }
-                                escapeNext = false;
-                                continue;
-                            }
-                            if (char === '\\') {
-                                escapeNext = true;
-                                continue;
-                            }
-                            if (char === '(') {
-                                parenDepth++;
-                                if (parenDepth === 1) {
-                                    inString = true;
-                                    continue;
-                                }
-                            }
-                            if (char === ')') {
-                                parenDepth--;
-                                if (parenDepth === 0) {
-                                    inString = false;
-                                    continue;
-                                }
-                            }
-                            if (inString && !/\s/.test(char)) {
-                                virtualString += char.toLowerCase();
-                                indexMap.push(i);
-                            }
-                        }
-
-                        if (virtualString.length > 0) {
-                            let contentArr = contentStr.split('');
-                            for (const target of targetStrsNoSpace) {
-                                if (!target) continue;
-                                let pos = 0;
-                                while ((pos = virtualString.indexOf(target, pos)) !== -1) {
-                                    for (let j = 0; j < target.length; j++) {
-                                        const charIndexInContent = indexMap[pos + j];
-                                        if (charIndexInContent !== undefined) {
-                                            contentArr[charIndexInContent] = ' '; // Overwrite character with space
-                                        }
-                                    }
-                                    modified = true;
-                                    pos += target.length;
-                                }
-                            }
-                            if (modified) {
-                                contentStr = contentArr.join('');
-                            }
-                        }
-
-                        if (modified) {
-                            const compressed = await compressStream(new TextEncoder().encode(contentStr));
-                            stream.setContents(compressed);
-                        }
-                    } catch (err) {}
+                // Inflate a Uint8Array using DecompressionStream
+                const inflate = async (data) => {
+                    for (const fmt of ['deflate', 'deflate-raw']) {
+                        try {
+                            let d = data;
+                            if (fmt === 'deflate-raw' && data[0] === 0x78) d = data.slice(2, -4);
+                            const ds = new DecompressionStream(fmt);
+                            const w = ds.writable.getWriter(); w.write(d); w.close();
+                            const r = ds.readable.getReader();
+                            const chunks = []; while(true){const{done,value}=await r.read();if(done)break;chunks.push(value);}
+                            const len = chunks.reduce((a,c)=>a+c.length,0);
+                            const out = new Uint8Array(len); let off=0;
+                            for(const c of chunks){out.set(c,off);off+=c.length;}
+                            return out;
+                        } catch(e) {}
+                    }
+                    return data;
                 };
 
-                // Scrub page contents
+                // Deflate a Uint8Array
+                const deflate = async (data) => {
+                    const cs = new CompressionStream('deflate');
+                    const w = cs.writable.getWriter(); w.write(data); w.close();
+                    const r = cs.readable.getReader();
+                    const chunks = []; while(true){const{done,value}=await r.read();if(done)break;chunks.push(value);}
+                    const len = chunks.reduce((a,c)=>a+c.length,0);
+                    const out = new Uint8Array(len); let off=0;
+                    for(const c of chunks){out.set(c,off);off+=c.length;}
+                    return out;
+                };
+
+                // Decode a PDF string token to a plain JS string
+                const decodePdfStr = (raw) => {
+                    if (raw.startsWith('<') && raw.endsWith('>')) {
+                        const hex = raw.slice(1,-1).replace(/\s/g,'');
+                        let s=''; for(let k=0;k<hex.length;k+=2) s+=String.fromCharCode(parseInt(hex.substr(k,2)||'0',16));
+                        return s;
+                    }
+                    if (raw.startsWith('(') && raw.endsWith(')')) {
+                        const inner = raw.slice(1,-1); let s='',k=0;
+                        while(k<inner.length){
+                            if(inner[k]==='\\'){k++;const m={n:'\n',r:'\r',t:'\t','(':'(', ')':')', '\\':'\\'};
+                                if(m[inner[k]]!==undefined){s+=m[inner[k]];k++;}
+                                else if(/[0-7]/.test(inner[k])){let o=inner[k++];if(/[0-7]/.test(inner[k]))o+=inner[k++];if(/[0-7]/.test(inner[k]))o+=inner[k++];s+=String.fromCharCode(parseInt(o,8));}
+                                else s+=inner[k++];
+                            } else s+=inner[k++];
+                        }
+                        return s;
+                    }
+                    return '';
+                };
+
+                // Extract combined text from a TJ array like [(abc) 5 (def)]
+                const decodeTJArray = (raw) => {
+                    const inner = raw.slice(1,-1); let s='',k=0;
+                    while(k<inner.length){
+                        while(k<inner.length&&/[\s]/.test(inner[k]))k++;
+                        if(k>=inner.length)break;
+                        if(inner[k]==='('){let d=0,start=k;while(k<inner.length){if(inner[k]==='\\'){k+=2;continue;}if(inner[k]==='(')d++;if(inner[k]===')')d--;k++;if(d===0)break;}s+=decodePdfStr(inner.slice(start,k));}
+                        else if(inner[k]==='<'){let start=k;while(k<inner.length&&inner[k]!=='>')k++;k++;s+=decodePdfStr(inner.slice(start,k));}
+                        else{while(k<inner.length&&!/[\s\[\]<>()\/%]/.test(inner[k]))k++;}
+                    }
+                    return s;
+                };
+
+                const matchesAny = (decoded) => {
+                    const low = decoded.toLowerCase().trim();
+                    // Require minimum 4 chars to avoid blanking individual letters throughout document
+                    if (!low || low.length < 4) return false;
+                    return normalizedTargets.some(t => t.length >= 4 && (low.includes(t) || t.includes(low)));
+                };
+
+                // Read a single PDF token from content string starting at pos
+                const readToken = (s, pos) => {
+                    while(pos<s.length && /[\x00\t\n\x0c\r ]/.test(s[pos])) pos++;
+                    if(pos>=s.length) return null;
+                    const ch = s[pos];
+                    if(ch==='%'){let e=pos;while(e<s.length&&s[e]!=='\n'&&s[e]!=='\r')e++;return{raw:s.slice(pos,e),end:e,type:'other'};}
+                    if(ch==='('){let d=0,j=pos;while(j<s.length){if(s[j]==='\\'){j+=2;continue;}if(s[j]==='(')d++;if(s[j]===')')d--;j++;if(d===0)break;}return{raw:s.slice(pos,j),end:j,type:'str'};}
+                    if(ch==='<'&&s[pos+1]!=='<'){let j=pos+1;while(j<s.length&&s[j]!=='>')j++;j++;return{raw:s.slice(pos,j),end:j,type:'str'};}
+                    if(ch==='['){ let d=0,j=pos;while(j<s.length){if(s[j]==='\\'){j+=2;continue;}if(s[j]==='('){let d2=0;while(j<s.length){if(s[j]==='\\'){j+=2;continue;}if(s[j]==='(')d2++;if(s[j]===')')d2--;j++;if(d2===0)break;}continue;}if(s[j]==='<'&&s[j+1]!=='<'){while(j<s.length&&s[j]!=='>')j++;j++;continue;}if(s[j]==='[')d++;if(s[j]===']')d--;j++;if(d===0)break;}return{raw:s.slice(pos,j),end:j,type:'arr'};}
+                    if(ch==='<'&&s[pos+1]==='<'){let d=0,j=pos;while(j<s.length){if(s[j]==='<'&&s[j+1]==='<'){d++;j+=2;}else if(s[j]==='>'&&s[j+1]==='>'){d--;j+=2;}else j++;if(d===0)break;}return{raw:s.slice(pos,j),end:j,type:'other'};}
+                    let j=pos;while(j<s.length&&!/[\x00\t\n\x0c\r ()\[\]{}<>\/%]/.test(s[j]))j++;
+                    if(j===pos) j++; // always advance to prevent infinite loop on unmatched delimiters
+                    return{raw:s.slice(pos,j),end:j,type:'tok'};
+                };
+
+                // Scrub a decompressed content stream string
+                const scrubContent = (content) => {
+                    const tokens = []; let pos=0;
+                    while(pos<content.length){
+                        while(pos<content.length&&/[\x00\t\n\x0c\r ]/.test(content[pos])){tokens.push({raw:content[pos],type:'ws'});pos++;}
+                        if(pos>=content.length)break;
+                        const tok = readToken(content,pos);
+                        if(!tok)break;
+                        if(tok.end <= pos){ pos++; continue; } // safety: always advance
+                        tokens.push(tok); pos=tok.end;
+                    }
+                    let modified = false;
+                    for(let i=0;i<tokens.length;i++){
+                        const t = tokens[i];
+                        if(t.type!=='tok') continue;
+                        // Strip Do calls for deleted XObjects
+                        if(t.raw==='Do'){
+                            let pi=i-1; while(pi>=0&&tokens[pi].type==='ws')pi--;
+                            if(pi>=0&&tokens[pi].type==='tok'&&tokens[pi].raw.startsWith('/')){
+                                const xName = tokens[pi].raw.slice(1);
+                                if(xDoNamesToRemove.has(xName)){tokens[pi].raw='';t.raw='';modified=true;}
+                            }
+                        } else if(t.raw==='Tj'||t.raw==="'"){
+                            let pi=i-1; while(pi>=0&&tokens[pi].type==='ws')pi--;
+                            if(pi>=0&&tokens[pi].type==='str'){
+                                if(matchesAny(decodePdfStr(tokens[pi].raw))){tokens[pi].raw='()';modified=true;}
+                            }
+                        } else if(t.raw==='TJ'){
+                            let pi=i-1; while(pi>=0&&tokens[pi].type==='ws')pi--;
+                            if(pi>=0&&tokens[pi].type==='arr'){
+                                if(matchesAny(decodeTJArray(tokens[pi].raw))){tokens[pi].raw='[]';modified=true;}
+                            }
+                        } else if(t.raw==='"'){
+                            let pi=i-1; while(pi>=0&&tokens[pi].type==='ws')pi--;
+                            if(pi>=0&&tokens[pi].type==='str'){
+                                if(matchesAny(decodePdfStr(tokens[pi].raw))){tokens[pi].raw='()';modified=true;}
+                            }
+                        }
+                    }
+                    return { result: tokens.map(t=>t.raw).join(''), modified };
+                };
+
+                // Process a single PDFRawStream
+                const processStream = async (stream) => {
+                    try {
+                        const filter = stream.dict.get(PDFName.of('Filter'));
+                        const isFlate = filter === PDFName.of('FlateDecode');
+                        const raw = stream.contents;
+                        const bytes = isFlate ? await inflate(raw) : raw;
+                        const text = new TextDecoder('latin1').decode(bytes);
+                        const { result, modified } = scrubContent(text);
+                        if (modified) {
+                            const enc = new TextEncoder().encode(result);
+                            if (isFlate) {
+                                const compressed = await deflate(enc);
+                                stream.setContents(compressed);
+                            } else {
+                                stream.setContents(enc);
+                                stream.dict.delete(PDFName.of('Filter'));
+                            }
+                        }
+                    } catch(e) { console.warn('stream scrub failed', e); }
+                };
+
+                // Process all page content streams + form XObjects
                 for (const page of pages) {
                     const contents = page.node.get(PDFName.of('Contents'));
                     if (contents) {
                         const resolved = pdfDoc.context.lookup(contents);
-                        const streams = resolved instanceof PDFArray ? resolved.array : [resolved];
-                        for (const s of streams) {
-                            if (s instanceof PDFRawStream) await scrubStream(s);
-                        }
+                        const streams = resolved instanceof PDFArray ? resolved.asArray() : [resolved];
+                        for (const s of streams) if (s instanceof PDFRawStream) await processStream(s);
                     }
                 }
-
-                // Deep scrub all Form streams found in document context
-                const allObjects = pdfDoc.context.enumerateIndirectObjects();
-                for (const [ref, obj] of allObjects) {
+                for (const [, obj] of pdfDoc.context.enumerateIndirectObjects()) {
                     if (obj instanceof PDFRawStream && obj.dict.get(PDFName.of('Subtype')) === PDFName.of('Form')) {
-                        await scrubStream(obj);
+                        await processStream(obj);
                     }
                 }
             }
-
 
             const pdfBytes = await pdfDoc.save();
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -397,72 +457,8 @@ const WatermarkRemoverTool = () => {
         }
     };
 
-    // --- STREAM UTILS ---
-    const decompressStream = async (data) => {
-        // Try 'deflate' first (Zlib compatible)
-        try {
-            return await runDecompression(data, 'deflate');
-        } catch (e) {
-            // Fallback to 'deflate-raw' if it has manual Zlib header stripping
-            try {
-                let rawData = data;
-                if (data[0] === 0x78) {
-                    rawData = data.slice(2, -4);
-                }
-                return await runDecompression(rawData, 'deflate-raw');
-            } catch (e2) {
-                throw new Error("Decompression failed");
-            }
-        }
-    };
 
-    const runDecompression = async (data, format) => {
-        const ds = new DecompressionStream(format);
-        const writer = ds.writable.getWriter();
-        writer.write(data);
-        writer.close();
-        
-        const reader = ds.readable.getReader();
-        const chunks = [];
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-        }
-        
-        const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
-        const result = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const c of chunks) {
-            result.set(c, offset);
-            offset += c.length;
-        }
-        return result;
-    };
 
-    const compressStream = async (data) => {
-        const cs = new CompressionStream('deflate');
-        const writer = cs.writable.getWriter();
-        writer.write(data);
-        writer.close();
-        
-        const reader = cs.readable.getReader();
-        const chunks = [];
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-        }
-        
-        const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
-        const result = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const c of chunks) {
-            result.set(c, offset);
-            offset += c.length;
-        }
-        return result;
-    };
 
     const toggleTextSelection = (text) => {
         const next = new Set(selectedText);

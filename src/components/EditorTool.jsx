@@ -28,8 +28,7 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 
 // Setting up the worker
-import pkg from 'pdfjs-dist/package.json';
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pkg.version}/pdf.worker.min.mjs`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
 import MarketingSection from './MarketingSection';
@@ -68,13 +67,13 @@ const EditorTool = () => {
 
     const renderPdfPreview = async (file) => {
         setIsRendering(true);
+        setPagesData([]);
         try {
             const arrayBuffer = await file.arrayBuffer();
-            const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+            const loadingTask = pdfjsLib.getDocument(arrayBuffer);
             const pdf = await loadingTask.promise;
             setNumPages(pdf.numPages);
 
-            const pages = [];
             for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
                 const viewport = page.getViewport({ scale: 2.0 });
@@ -89,7 +88,7 @@ const EditorTool = () => {
                 // Get Text Content for Smart Detection
                 const textContent = await page.getTextContent();
 
-                pages.push({
+                const pageData = {
                     url: canvas.toDataURL(),
                     width: viewport.width / 2,
                     height: viewport.height / 2,
@@ -104,13 +103,16 @@ const EditorTool = () => {
                             fontSize: fontSize
                         };
                     })
-                });
+                };
+
+                setPagesData(prev => [...prev, pageData]);
+                
+                // Stop showing loader after first page is ready
+                if (i === 1) setIsRendering(false);
             }
-            setPagesData(pages);
         } catch (error) {
             console.error("Error rendering PDF:", error);
             alert("Failed to render PDF preview.");
-        } finally {
             setIsRendering(false);
         }
     };
@@ -373,13 +375,21 @@ const EditorTool = () => {
     };
 
     return (
+        <>
         <div className="workspace-container animate-fadeIn" onMouseMove={onMouseMove} onMouseUp={onMouseUp}>
             {/* Top Workspace Bar */}
             <div className="workspace-top-bar glass-card">
                 <div className="top-bar-left">
-                    <button className="workspace-icon-btn" onClick={() => { setFile(null); setPagesData([]); }} title="Close Document">
-                        <X size={20} />
-                    </button>
+                    {!file ? (
+                        <button className="export-action-btn" onClick={() => document.getElementById('pdf-upload-workspace').click()}>
+                            <FileUp size={16} />
+                            <span>Upload PDF</span>
+                        </button>
+                    ) : (
+                        <button className="workspace-icon-btn" onClick={() => { setFile(null); setPagesData([]); }} title="Close Document">
+                            <X size={20} />
+                        </button>
+                    )}
                     <div className="divider" />
                     <div className="tool-selector">
                         <button className={`tool-btn ${activeTool === 'select' ? 'active' : ''}`} onClick={() => setActiveTool('select')} title="Selection Mode">
@@ -445,8 +455,11 @@ const EditorTool = () => {
                 <div className="workspace-editor-area">
                     {!file ? (
                         <div className="workspace-upload-zone" onClick={() => document.getElementById('pdf-upload-workspace').click()}>
-                            <div className="upload-inner" style={{ border: 'none', background: 'transparent' }}>
-                                <div className="huge-select-btn">Select PDF file</div>
+                            <div className="upload-inner">
+                                <div className="huge-select-btn">
+                                    <FileUp size={24} />
+                                    <span>Select PDF file</span>
+                                </div>
                                 <p className="upload-subtext" style={{ marginTop: '1rem' }}>or drop PDF here to edit</p>
                                 <input type="file" id="pdf-upload-workspace" hidden accept=".pdf" onChange={onFileChange} />
                             </div>
@@ -585,8 +598,7 @@ const EditorTool = () => {
             </div>
 
             <input type="file" id="image-upload-helper" hidden accept="image/*" onChange={onImageSelect} />
-            <MarketingSection toolId="editor" />
-
+            
             <style>{`
                 .workspace-container { display: flex; flex-direction: column; height: calc(100vh - 120px); background: #111827; border-radius: 16px; overflow: hidden; position: relative; }
                 .workspace-top-bar { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; background: rgba(17, 24, 39, 0.8); border-bottom: 1px solid rgba(255, 255, 255, 0.1); z-index: 100; }
@@ -599,7 +611,7 @@ const EditorTool = () => {
                 .zoom-controls { display: flex; align-items: center; gap: 12px; background: rgba(0, 0, 0, 0.2); padding: 4px 12px; border-radius: 10px; }
                 .zoom-text { font-size: 13px; font-weight: 600; min-width: 45px; text-align: center; }
                 .export-action-btn { display: flex; align-items: center; gap: 8px; background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); color: white; padding: 8px 16px; border-radius: 10px; border: none; cursor: pointer; font-weight: 600; font-size: 14px; }
-                .workspace-main { flex: 1; display: flex; overflow: hidden; }
+                .workspace-main { flex: 1; display: flex; overflow: hidden; min-height: 400px; }
                 .workspace-left-sidebar { width: 160px; background: rgba(0, 0, 0, 0.2); border-right: 1px solid rgba(255, 255, 255, 0.05); display: flex; flex-direction: column; padding: 16px; gap: 16px; }
                 .sidebar-title { font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
                 .thumbnails-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
@@ -637,11 +649,15 @@ const EditorTool = () => {
                 .workspace-upload-zone { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 40px; cursor: pointer; }
                 .upload-inner { max-width: 400px; text-align: center; padding: 40px; border: 2px dashed rgba(255,255,255,0.1); border-radius: 24px; transition: all 0.2s; }
                 .upload-inner:hover { border-color: #6366f1; background: rgba(99, 102, 241, 0.05); }
+                .rendering-overlay { position: absolute; inset: 0; background: rgba(17, 24, 39, 0.8); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 50; gap: 20px; color: white; }
+                .rendering-overlay p { font-weight: 500; color: #94a3b8; }
                 .workspace-help h4 { font-size: 12px; color: white; margin-bottom: 8px; }
                 .workspace-help ul { font-size: 11px; color: #64748b; padding-left: 16px; }
                 .workspace-help li { margin-bottom: 4px; }
             `}</style>
         </div>
+        <MarketingSection toolId="editor" />
+        </>
     );
 };
 
