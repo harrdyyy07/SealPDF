@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Droplets, Layers, Scissors, Hash, RotateCw, Image as ImageIcon,
-  Trash2, DownloadCloud, Type, FileOutput, RefreshCw, Crop, Lock, ChevronDown, Moon, Sun, ShieldCheck, Zap, Menu, X, User, Eraser
+  Trash2, DownloadCloud, Type, FileOutput, RefreshCw, Crop, Lock, ChevronDown, Moon, Sun, ShieldCheck, Zap, Menu, X, User, Eraser, FileText
 } from 'lucide-react';
 import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton } from '@clerk/clerk-react';
 
@@ -32,6 +32,7 @@ import PrivacyPolicy from './components/PrivacyPolicy';
 import TermsOfService from './components/TermsOfService';
 import AboutUs from './components/AboutUs';
 import ContactUs from './components/ContactUs';
+import PdfToWordTool from './components/PdfToWordTool';
 
 const categories = [
   {
@@ -55,6 +56,7 @@ const categories = [
     title: "CONVERT FROM PDF",
     tools: [
       { path: '/pdf-to-jpg', name: 'PDF to JPG', desc: 'Convert each PDF page into a JPG or extract all images contained in a PDF.', icon: <ImageIcon />, component: PdfToJpgTool },
+      { path: '/pdf-to-word', name: 'PDF to Word', desc: 'Convert PDF documents to editable Word files with high accuracy.', icon: <FileText />, component: PdfToWordTool },
     ]
   },
   {
@@ -80,6 +82,16 @@ const categories = [
 // Flatten tools for routing mapping
 const allTools = categories.flatMap(cat => cat.tools);
 
+function ScrollToTop() {
+  const { pathname } = useLocation();
+
+  React.useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+
+  return null;
+}
+
 function App() {
   const [installPrompt, setInstallPrompt] = React.useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
@@ -98,6 +110,7 @@ function App() {
       localStorage.setItem('theme', 'light');
     }
   }, [isDarkMode]);
+
 
   React.useEffect(() => {
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -150,6 +163,7 @@ function App() {
 
   return (
     <div className="app-shell">
+      <ScrollToTop />
       <header className="top-header">
         <div className="header-left">
           <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(true)}>

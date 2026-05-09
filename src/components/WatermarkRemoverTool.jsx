@@ -26,6 +26,7 @@ const WatermarkRemoverTool = () => {
     const [isScanning, setIsScanning] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [complete, setComplete] = useState(false);
+    const [downloadUrl, setDownloadUrl] = useState(null);
     
     // Detected potential watermarks
     const [detectedObjects, setDetectedObjects] = useState([]); // {id, name, count, type}
@@ -35,19 +36,18 @@ const WatermarkRemoverTool = () => {
     const [targetText, setTargetText] = useState('');
     const [detectedText, setDetectedText] = useState([]); // {text, count, transform, fontName}
     const [selectedText, setSelectedText] = useState(new Set());
-    const [watermarkFonts, setWatermarkFonts] = useState(new Set());
 
     const onFileChange = (e) => {
         const selectedFile = e.target.files[0];
         if (selectedFile && selectedFile.type === 'application/pdf') {
             setFile(selectedFile);
             setComplete(false);
+            setDownloadUrl(null);
             setDetectedObjects([]);
             setHasAnnotations(false);
             setDetectedText([]);
             setSelectedObjects(new Set());
             setSelectedText(new Set());
-            setWatermarkFonts(new Set());
             setTargetText('');
             setRemoveAnnots(false);
             
@@ -63,73 +63,109 @@ const WatermarkRemoverTool = () => {
             const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
             const pages = pdfDoc.getPages();
             
-            const objectUsage = new Map(); // PDFRef -> {name, count, pages: []}
+            const objectUsage = new Map(); // PDFRef -> {name, count, type}
             let totalAnnotations = 0;
+            const visitedRefs = new Set();
+
+            // Recursive XObject Scanner with Circular Protection
+            const scanResources = (resources) => {
+                if (!resources) return;
+                const xObjects = resources.get(PDFName.of('XObject'));
+                if (!xObjects || !(xObjects.entries)) return;
+
+                for (const [name, ref] of xObjects.entries()) {
+                    const refStr = ref.toString();
+                    const nameStr = name.decodeText();
+                    
+                    if (!objectUsage.has(refStr)) {
+                        objectUsage.set(refStr, { name: nameStr, count: 0, type: 'XObject' });
+                        
+                        // Deep scan if it's a Form XObject and not visited
+                        if (!visitedRefs.has(refStr)) {
+                            visitedRefs.add(refStr);
+                            try {
+                                const xObj = pdfDoc.context.lookup(ref);
+                                if (xObj instanceof PDFRawStream) {
+                                    const subtype = xObj.dict.get(PDFName.of('Subtype'));
+                                    if (subtype === PDFName.of('Form')) {
+                                        const nestedRes = xObj.dict.get(PDFName.of('Resources'));
+                                        if (nestedRes) scanResources(pdfDoc.context.lookup(nestedRes));
+                                    }
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                    
+                    const data = objectUsage.get(refStr);
+                    data.count++;
+                }
+            };
 
             for (let i = 0; i < pages.length; i++) {
                 const page = pages[i];
-                
-                // Check Annotations
                 const annots = pdfDoc.context.lookup(page.node.get(PDFName.of('Annots')));
                 if (annots instanceof PDFArray) totalAnnotations += annots.size();
-
-                // Check XObjects (Images/Forms)
-                const resources = page.node.normalizedEntries().Resources;
-                if (resources && resources.get(PDFName.of('XObject'))) {
-                    const xObjects = resources.get(PDFName.of('XObject'));
-                    if (xObjects.entries) {
-                        for (const [name, ref] of xObjects.entries()) {
-                            const refStr = ref.toString();
-                            if (!objectUsage.has(refStr)) {
-                                objectUsage.set(refStr, { name: name.decodeText(), count: 0, pages: [] });
-                            }
-                            const data = objectUsage.get(refStr);
-                            data.count++;
-                            data.pages.push(i);
-                        }
-                    }
-                }
+                scanResources(page.node.normalizedEntries().Resources);
             }
 
-            // --- SCAN TEXT (New: using pdfjs-dist) ---
-            const textUsage = new Map(); // string -> count
+            // --- SCAN TEXT (Diverse Sampling) ---
+            const textUsage = new Map(); // string -> {count, transforms: Set}
             try {
                 const pdfjsData = await pdfFile.arrayBuffer();
                 const pdfjsDoc = await pdfjsLib.getDocument({ data: pdfjsData }).promise;
-                for (let i = 1; i <= Math.min(pages.length, 10); i++) { // Sample first 10 pages for speed
+                
+                // Sample Start, Middle, and End
+                const numPages = pdfjsDoc.numPages;
+                const sampleIndices = new Set();
+                for (let i = 1; i <= Math.min(numPages, 10); i++) sampleIndices.add(i);
+                for (let i = Math.max(1, Math.floor(numPages/2)-2); i <= Math.min(numPages, Math.floor(numPages/2)+2); i++) sampleIndices.add(i);
+                for (let i = Math.max(1, numPages-5); i <= numPages; i++) sampleIndices.add(i);
+
+                for (const i of sampleIndices) {
                     const page = await pdfjsDoc.getPage(i);
                     const content = await page.getTextContent();
                     const pageStrings = new Set();
+                    
                     for (const item of content.items) {
                         const s = item.str.trim();
                         if (s.length > 3) {
-                            // Composite key: text + transform matrix + font (internal pdfjs name)
-                            const transform = item.transform.join('_');
-                            const fontKey = item.fontName; 
-                            pageStrings.add(`${s}|@|${transform}|@|${fontKey}`);
+                            const transform = item.transform.map(n => Math.round(n)).join('_');
+                            pageStrings.add(`${s}|@|${transform}`);
                         }
                     }
                     for (const s of pageStrings) {
-                        textUsage.set(s, (textUsage.get(s) || 0) + 1);
+                        const [text, transform] = s.split('|@|');
+                        if (!textUsage.has(text)) textUsage.set(text, { count: 0, transforms: new Set() });
+                        const entry = textUsage.get(text);
+                        entry.count++;
+                        entry.transforms.add(transform);
                     }
                 }
             } catch (err) {
                 console.error("Text scan error", err);
             }
 
-            // Identify recurring text (appearing on multiple sample pages)
-            const sampleCount = Math.min(pages.length, 10);
+            // Identify recurring elements based on text frequency, regardless of absolute transform
+            const sampleCount = Array.from(new Set(textUsage.keys())).length > 0 ? Array.from(textUsage.values())[0].count : 0; // heuristic
+            // Actually, sampleCount is the size of sampleIndices
+            const actualSampleCount = new Set([
+              ...Array.from({length: Math.min(pages.length, 10)}, (_, i) => i + 1),
+              ...Array.from({length: 5}, (_, i) => Math.max(1, Math.floor(pages.length/2)-2) + i).filter(i => i <= pages.length),
+              ...Array.from({length: 6}, (_, i) => Math.max(1, pages.length-5) + i).filter(i => i <= pages.length)
+            ]).size;
+
             const potentialTextWatermarks = Array.from(textUsage.entries())
-                .filter(([_, count]) => count > 1)
-                .map(([combined, count]) => {
-                    const [text, transform, fontName] = combined.split('|@|');
-                    return { text, count, transform, fontName, confidence: count / sampleCount };
-                });
+                .filter(([_, data]) => data.count > 1) // On more than one sampled page
+                .map(([text, data]) => ({ 
+                    text, 
+                    count: data.count, 
+                    confidence: data.count / actualSampleCount,
+                    isPositional: data.transforms.size === 1 // True if it's always in the same spot
+                }))
+                .sort((a, b) => b.count - a.count);
             
             setDetectedText(potentialTextWatermarks);
-            // --- END SCAN TEXT ---
 
-            // Identify recurring objects (appearing on more than 1 page or at least 50% of pages if doc is small)
             const potentialWatermarks = Array.from(objectUsage.entries())
                 .filter(([_, data]) => data.count > 1 || (pages.length === 1 && data.count === 1))
                 .map(([ref, data]) => ({
@@ -141,34 +177,30 @@ const WatermarkRemoverTool = () => {
 
             setDetectedObjects(potentialWatermarks);
             
-            // --- MAGIC AUTO: High-Confidence Selection ---
-            // Auto-select recurring elements that appear on >80% of sampled pages
             const autoSelectedObj = new Set();
             const autoSelectedText = new Set();
-            const autoFonts = new Set();
             
             potentialWatermarks.forEach(obj => {
-                if (obj.count / pages.length > 0.8) autoSelectedObj.add(obj.id);
+                if (obj.count / pages.length > 0.6) autoSelectedObj.add(obj.id);
             });
             potentialTextWatermarks.forEach(txt => {
-                if (txt.confidence > 0.8) {
-                    autoSelectedText.add(txt.text);
-                    if (txt.fontName) autoFonts.add(txt.fontName);
-                }
+                if (txt.confidence > 0.6) autoSelectedText.add(txt.text);
             });
             
             setSelectedObjects(autoSelectedObj);
             setSelectedText(autoSelectedText);
-            setWatermarkFonts(autoFonts);
             setHasAnnotations(totalAnnotations > 0);
             if (totalAnnotations > 0) setRemoveAnnots(true);
 
         } catch (err) {
             console.error("Scan error", err);
+            alert("Analysis failed. This PDF might be heavily protected.");
         } finally {
             setIsScanning(false);
         }
     };
+
+
 
     const toggleObjectSelection = (id) => {
         const next = new Set(selectedObjects);
@@ -186,140 +218,179 @@ const WatermarkRemoverTool = () => {
             const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
             const pages = pdfDoc.getPages();
 
-            // --- MAGIC AUTO: Document-level Stripping ---
-            // 1. Remove OCG (Layers) - This often holds "per-document" watermarks
+            // 1. Structural Cleaning
             const catalog = pdfDoc.catalog;
-            if (catalog.get(PDFName.of('OCProperties'))) {
-                catalog.delete(PDFName.of('OCProperties'));
-            }
+            if (catalog.has(PDFName.of('OCProperties'))) catalog.delete(PDFName.of('OCProperties'));
+            if (catalog.has(PDFName.of('PieceInfo'))) catalog.delete(PDFName.of('PieceInfo'));
 
-            // 0. Metadata Cleaning (some watermarks hide here)
-            if (catalog.get(PDFName.of('PieceInfo'))) {
-                catalog.delete(PDFName.of('PieceInfo'));
-            }
-
-            // 1. Process Annotations
+            // 2. Annotations
             if (removeAnnots) {
-                for (const page of pages) {
-                    page.node.set(PDFName.of('Annots'), pdfDoc.context.obj([]));
-                }
+                for (const page of pages) page.node.delete(PDFName.of('Annots'));
             }
 
-            // 2. Process Chosen XObjects
+            // 3. Process Chosen XObjects with Circular Protection
+            const visitedSwapRefs = new Set();
             if (selectedObjects.size > 0) {
-                const targetNames = new Set(
-                    detectedObjects
-                        .filter(obj => selectedObjects.has(obj.id))
-                        .map(obj => obj.name)
-                );
-
-                // Reusable replacement image for Resource Swap
+                const targetRefs = new Set(Array.from(selectedObjects));
                 const transparentPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mP8/5+hAAGMAAMMDvPQnAAAAABJRU5ErkJggg==';
                 const replacementImage = await pdfDoc.embedPng(transparentPng);
 
-                for (const page of pages) {
-                    const resources = page.node.normalizedEntries().Resources;
-                    if (!resources) continue;
-                    
+                const swapResources = (resources) => {
+                    if (!resources) return;
                     const xObjectsDict = resources.get(PDFName.of('XObject'));
-                    if (!xObjectsDict) continue;
+                    if (!xObjectsDict || !(xObjectsDict.entries)) return;
 
-                    for (const [name, _] of xObjectsDict.entries()) {
-                        const nameStr = name.decodeText();
-                        if (targetNames.has(nameStr)) {
+                    for (const [name, ref] of xObjectsDict.entries()) {
+                        const refStr = ref.toString();
+                        if (targetRefs.has(refStr)) {
                             xObjectsDict.set(name, replacementImage.ref);
+                        } else if (!visitedSwapRefs.has(refStr)) {
+                            visitedSwapRefs.add(refStr);
+                            try {
+                                const xObj = pdfDoc.context.lookup(ref);
+                                if (xObj instanceof PDFRawStream && xObj.dict.get(PDFName.of('Subtype')) === PDFName.of('Form')) {
+                                    const nestedRes = xObj.dict.get(PDFName.of('Resources'));
+                                    if (nestedRes) swapResources(pdfDoc.context.lookup(nestedRes));
+                                }
+                            } catch (e) {}
                         }
                     }
+                };
+
+                for (const page of pages) {
+                    swapResources(page.node.normalizedEntries().Resources);
                 }
             }
 
-            // 3. Process Text Scrubbing
+            // 4. Trace & Scrub Text Content
             const finalTargetTextList = Array.from(selectedText);
             if (targetText.trim()) finalTargetTextList.push(targetText.trim());
 
             if (finalTargetTextList.length > 0) {
+                const targetStrsNoSpace = finalTargetTextList.map(t => t.toLowerCase().replace(/\s+/g, ''));
+                const originalRegexes = finalTargetTextList.map(t => {
+                    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    return new RegExp('\\((?:' + escaped + ')\\)\\s*[TjTJ]', 'ig');
+                });
+
+                const scrubStream = async (stream) => {
+                    try {
+                        const data = stream.contents;
+                        const decompressed = await decompressStream(data);
+                        let contentStr = new TextDecoder().decode(decompressed);
+                        let modified = false;
+
+                        // 1. Classic Full Match Replace
+                        for (const reg of originalRegexes) {
+                            if (reg.test(contentStr)) {
+                                contentStr = contentStr.replace(reg, '() Tj');
+                                modified = true;
+                            }
+                        }
+
+                        // 2. Token Mapper (Aggressive Character Stripping)
+                        let virtualString = '';
+                        let indexMap = [];
+                        let inString = false;
+                        let escapeNext = false;
+                        let parenDepth = 0;
+                        
+                        for (let i = 0; i < contentStr.length; i++) {
+                            const char = contentStr[i];
+                            if (escapeNext) {
+                                if (inString && !/\s/.test(char)) {
+                                    virtualString += char.toLowerCase();
+                                    indexMap.push(i);
+                                }
+                                escapeNext = false;
+                                continue;
+                            }
+                            if (char === '\\') {
+                                escapeNext = true;
+                                continue;
+                            }
+                            if (char === '(') {
+                                parenDepth++;
+                                if (parenDepth === 1) {
+                                    inString = true;
+                                    continue;
+                                }
+                            }
+                            if (char === ')') {
+                                parenDepth--;
+                                if (parenDepth === 0) {
+                                    inString = false;
+                                    continue;
+                                }
+                            }
+                            if (inString && !/\s/.test(char)) {
+                                virtualString += char.toLowerCase();
+                                indexMap.push(i);
+                            }
+                        }
+
+                        if (virtualString.length > 0) {
+                            let contentArr = contentStr.split('');
+                            for (const target of targetStrsNoSpace) {
+                                if (!target) continue;
+                                let pos = 0;
+                                while ((pos = virtualString.indexOf(target, pos)) !== -1) {
+                                    for (let j = 0; j < target.length; j++) {
+                                        const charIndexInContent = indexMap[pos + j];
+                                        if (charIndexInContent !== undefined) {
+                                            contentArr[charIndexInContent] = ' '; // Overwrite character with space
+                                        }
+                                    }
+                                    modified = true;
+                                    pos += target.length;
+                                }
+                            }
+                            if (modified) {
+                                contentStr = contentArr.join('');
+                            }
+                        }
+
+                        if (modified) {
+                            const compressed = await compressStream(new TextEncoder().encode(contentStr));
+                            stream.setContents(compressed);
+                        }
+                    } catch (err) {}
+                };
+
+                // Scrub page contents
                 for (const page of pages) {
-                    const contentsRef = page.node.get(PDFName.of('Contents'));
-                    const contents = pdfDoc.context.lookup(contentsRef);
-                    const streams = [];
-                    if (contents instanceof PDFRawStream) streams.push(contents);
-                    else if (contents instanceof PDFArray) {
-                        for (let j = 0; j < contents.size(); j++) {
-                            const entry = pdfDoc.context.lookup(contents.get(j));
-                            if (entry instanceof PDFRawStream) streams.push(entry);
+                    const contents = page.node.get(PDFName.of('Contents'));
+                    if (contents) {
+                        const resolved = pdfDoc.context.lookup(contents);
+                        const streams = resolved instanceof PDFArray ? resolved.array : [resolved];
+                        for (const s of streams) {
+                            if (s instanceof PDFRawStream) await scrubStream(s);
                         }
                     }
+                }
 
-                    for (const stream of streams) {
-                        try {
-                            // DECOMPRESS & CLEAN
-                            // PDF FlateDecode streams often have Zlib headers (78 9C)
-                            const data = stream.contents;
-                            const decompressed = await decompressStream(data);
-                            let contentStr = new TextDecoder().decode(decompressed);
-
-                            // Identify which internal font reference (e.g. /F1) our target fonts map to on this page
-                            const fontResources = page.node.get(PDFName.of('Resources'))?.get(PDFName.of('Font'));
-                            const localWatermarkFontNames = new Set();
-                            
-                            if (fontResources) {
-                                // Resolve any PDFJS font names back to their PDF references if possible, 
-                                // otherwise we'll rely on the text scanning fallback
-                                // Note: In simplistic cases, we just use the global font name list from our scan
-                            }
-
-                            let modified = false;
-                            
-                            // A: FONT-BASED EXCISION (AGGRESSIVE)
-                            // This deletes the font switch and subsequent text blocks
-                            const fontStripRegex = /\/([A-Za-z0-9]+)\s+([0-9.]+)\s+Tf/g;
-                            // (Simplified for now - we'll focus on text string replacement with auto-detection)
-
-                            // B: ADVANCED STRING Replacement
-                            for (const t of finalTargetTextList) {
-                                // Match (Target Text) Tj, (Target Text) TJ, [ (T) 5 (ext) ] TJ, <HEX> Tj
-                                const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                                
-                                // Fragmented TJ Array Match (Aggressive)
-                                // This matches [(F) 5 (r) -10 (a) (g) (m) (e) (n) (t)] TJ
-                                const chars = t.split('').map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*-?[0-9.]*\\s*');
-                                const tjArrayRegex = new RegExp('\\[?\\s*\\(' + chars + '\\).*?\\]?\\s*[TjTJ]', 'g');
-                                
-                                if (tjArrayRegex.test(contentStr)) {
-                                    contentStr = contentStr.replace(tjArrayRegex, '() Tj');
-                                    modified = true;
-                                }
-
-                                // Standard match fallback
-                                const simpleRegex = new RegExp('\\(' + escaped + '\\)\\s*[TjTJ]', 'g');
-                                if (simpleRegex.test(contentStr)) {
-                                    contentStr = contentStr.replace(simpleRegex, '() Tj');
-                                    modified = true;
-                                }
-                                
-                                // Hex Match would require CMap lookup - for now, TJ coverage is the biggest win
-                            }
-
-                            if (modified) {
-                                const compressed = await compressStream(new TextEncoder().encode(contentStr));
-                                stream.setContents(compressed);
-                            }
-                        } catch (err) {
-                            console.error("Stream scrubbing failed, skipping...", err);
-                        }
+                // Deep scrub all Form streams found in document context
+                const allObjects = pdfDoc.context.enumerateIndirectObjects();
+                for (const [ref, obj] of allObjects) {
+                    if (obj instanceof PDFRawStream && obj.dict.get(PDFName.of('Subtype')) === PDFName.of('Form')) {
+                        await scrubStream(obj);
                     }
                 }
             }
 
+
             const pdfBytes = await pdfDoc.save();
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             const url = URL.createObjectURL(blob);
+            setDownloadUrl(url);
+            
             const link = document.createElement('a');
             link.href = url;
             link.download = `cleaned_${file.name}`;
             link.click();
             setComplete(true);
         } catch (error) {
+            console.error(error);
             alert(`Error during processing: ${error.message}`);
         } finally {
             setIsProcessing(false);
@@ -328,16 +399,27 @@ const WatermarkRemoverTool = () => {
 
     // --- STREAM UTILS ---
     const decompressStream = async (data) => {
-        // Try native DecompressionStream (Chrome/Safari/FF)
-        // Handle Zlib header if present (78 9C or similar)
-        let rawData = data;
-        if (data[0] === 0x78 && data[1] === 0x9c) {
-            rawData = data.slice(2, -4); // Strip Zlib header and checksum
+        // Try 'deflate' first (Zlib compatible)
+        try {
+            return await runDecompression(data, 'deflate');
+        } catch (e) {
+            // Fallback to 'deflate-raw' if it has manual Zlib header stripping
+            try {
+                let rawData = data;
+                if (data[0] === 0x78) {
+                    rawData = data.slice(2, -4);
+                }
+                return await runDecompression(rawData, 'deflate-raw');
+            } catch (e2) {
+                throw new Error("Decompression failed");
+            }
         }
-        
-        const ds = new DecompressionStream('deflate-raw');
+    };
+
+    const runDecompression = async (data, format) => {
+        const ds = new DecompressionStream(format);
         const writer = ds.writable.getWriter();
-        writer.write(rawData);
+        writer.write(data);
         writer.close();
         
         const reader = ds.readable.getReader();
@@ -359,7 +441,7 @@ const WatermarkRemoverTool = () => {
     };
 
     const compressStream = async (data) => {
-        const cs = new CompressionStream('deflate'); // deflate usually includes zlib headers
+        const cs = new CompressionStream('deflate');
         const writer = cs.writable.getWriter();
         writer.write(data);
         writer.close();
@@ -479,14 +561,26 @@ const WatermarkRemoverTool = () => {
                                         <button 
                                             className="action-btn" 
                                             onClick={removeWatermarks} 
-                                            disabled={isProcessing || (selectedObjects.size === 0 && !removeAnnots)}
+                                            disabled={isProcessing || (selectedObjects.size === 0 && selectedText.size === 0 && !removeAnnots && !targetText.trim())}
                                             style={{ marginTop: '2rem' }}
                                         >
                                             {isProcessing ? <><Loader2 className="animate-spin" /> Cleaning...</> : <><Eraser size={20} /> Remove Selected & Download</>}
                                         </button>
                                     </AuthDownloadWrapper>
                                     
-                                    {complete && <div className="status-msg success" style={{ marginTop: '1rem' }}><CheckCircle2 size={16} /> Data stripped successfully! Check your download.</div>}
+                                    {complete && (
+                                        <div className="status-msg success" style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'flex-start' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <CheckCircle2 size={16} /> 
+                                                <span>Data stripped successfully!</span>
+                                            </div>
+                                            {downloadUrl && (
+                                                <p style={{ fontSize: '0.85rem', opacity: 0.9 }}>
+                                                    If download didn't start, <a href={downloadUrl} download={`cleaned_${file.name}`} style={{ color: 'var(--accent-main)', fontWeight: 600, textDecoration: 'underline' }}>click here to manual download</a>.
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

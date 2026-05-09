@@ -536,5 +536,38 @@ export const toolMarketingData = {
             { question: "Does it support signatures?", answer: "Yes, you can draw your signature or upload an image of it to sign any page." },
             { question: "Is my edited file secure?", answer: "Absolutely. We use SSL encryption and delete files shortly after you finish editing." }
         ]
+    },
+    'pdf2word': {
+        title: "PDF to Word Converter — Convert PDF to Editable DOCX",
+        description: "Transform your PDF documents into editable Microsoft Word files. Our tool extracts text and preserves basic formatting so you can edit your content easily in Word or Google Docs.",
+        features: [
+            { icon: FileText, title: "Editable Word Files", text: "Get high-quality .docx files that you can edit, format, and share" },
+            { icon: Zap, title: "Fast Extraction", text: "Our advanced text extraction engine processes pages in seconds" },
+            { icon: Shield, title: "100% Private", text: "Your documents are processed locally in your browser for maximum security" },
+            { icon: Smartphone, title: "No Software Needed", text: "Convert PDFs to Word on any device without installing Office or Acrobat" }
+        ],
+        details: [
+            {
+                title: "Unlock Your Content",
+                text: "Stop retyping documents from scratch. Convert reports, essays, and contracts into Word format to make changes effortlessly.",
+                icon: FileText
+            },
+            {
+                title: "Preserve Text Integrity",
+                text: "We focus on high-fidelity text extraction to ensure your words are captured accurately, page by page.",
+                icon: Zap
+            }
+        ],
+        steps: [
+            { title: "Upload PDF", text: "Select the PDF file you want to convert into an editable Word document." },
+            { title: "Convert to Word", text: "Click the convert button and wait for our engine to extract the text content." },
+            { title: "Download DOCX", text: "Once finished, download your new Word file and start editing immediately." }
+        ],
+        faqs: [
+            { question: "Can I edit the converted Word file?", answer: "Yes, the resulting .docx file is fully editable in Microsoft Word, Google Docs, and LibreOffice." },
+            { question: "Does it preserve images?", answer: "The current version focus on high-quality text extraction. Complex image layouts may require manual adjustment in Word." },
+            { question: "Is it really free?", answer: "Yes, our PDF to Word converter is completely free to use with no hidden costs or watermarks." }
+        ]
     }
 };
+
