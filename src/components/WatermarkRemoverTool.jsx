@@ -9,16 +9,44 @@ import {
     CheckCircle2,
     X,
     AlertCircle,
-    Info
+    Info,
+    Zap
 } from 'lucide-react';
 import { PDFDocument, PDFName, PDFRawStream, PDFArray, PDFDict } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
+import { createWorker } from 'tesseract.js';
 
 // Setup pdf.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 import AuthDownloadWrapper from './AuthDownloadWrapper';
 import MarketingSection from './MarketingSection';
+
+// --- UTILS ---
+const levenshteinDistance = (s, t) => {
+    if (!s || !t) return 99;
+    const m = s.length, n = t.length;
+    const d = Array.from({ length: m + 1 }, () => new Uint8Array(n + 1));
+    for (let i = 0; i <= m; i++) d[i][0] = i;
+    for (let j = 0; j <= n; j++) d[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+            d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+        }
+    }
+    return d[m][n];
+};
+
+const isFuzzyMatch = (s1, s2, threshold = 0.75) => {
+    if (!s1 || !s2) return false;
+    const l1 = s1.toLowerCase(), l2 = s2.toLowerCase();
+    if (l1.includes(l2) || l2.includes(l1)) return true;
+    const dist = levenshteinDistance(l1, l2);
+    const maxLen = Math.max(l1.length, l2.length);
+    return (1 - dist / maxLen) >= threshold;
+};
+// --- END UTILS ---
 
 
 const WatermarkRemoverTool = () => {
@@ -36,6 +64,26 @@ const WatermarkRemoverTool = () => {
     const [targetText, setTargetText] = useState('');
     const [detectedText, setDetectedText] = useState([]); // {text, count, transform, fontName}
     const [selectedText, setSelectedText] = useState(new Set());
+    const [watermarkFonts, setWatermarkFonts] = useState(new Set()); // Internal font names like /F1
+    
+    // AI Specific State
+    const [isAiScanning, setIsAiScanning] = useState(false);
+    const [aiProgress, setAiProgress] = useState(0);
+    const [aiDetections, setAiDetections] = useState([]); // {text, bbox, page}
+    const [isUltraMode, setIsUltraMode] = useState(false); // If true, use OpenCV inpainting on rasterized pages
+    const [isNuclearMode, setIsNuclearMode] = useState(true); // If true, use aggressive font-based excision
+    const [isCvLoaded, setIsCvLoaded] = useState(false);
+
+    useEffect(() => {
+        // Check if OpenCV is loaded from script tag
+        const checkCv = setInterval(() => {
+            if (window.cv && window.cv.getBuildInformation) {
+                setIsCvLoaded(true);
+                clearInterval(checkCv);
+            }
+        }, 1000);
+        return () => clearInterval(checkCv);
+    }, []);
 
     const onFileChange = (e) => {
         const selectedFile = e.target.files[0];
@@ -50,6 +98,8 @@ const WatermarkRemoverTool = () => {
             setSelectedText(new Set());
             setTargetText('');
             setRemoveAnnots(false);
+            setAiDetections([]);
+            setAiProgress(0);
             
             // Auto-scan file
             scanPDF(selectedFile);
@@ -119,12 +169,11 @@ const WatermarkRemoverTool = () => {
             }
 
             // --- SCAN TEXT (Diverse Sampling) ---
-            const textUsage = new Map(); // string -> {count, transforms: Set}
+            const textUsage = new Map(); // string -> {count, transforms: Set, fonts: Set}
             try {
                 const pdfjsData = await pdfFile.arrayBuffer();
                 const pdfjsDoc = await pdfjsLib.getDocument({ data: pdfjsData }).promise;
                 
-                // Sample Start, Middle, and End
                 const numPages = pdfjsDoc.numPages;
                 const sampleIndices = new Set();
                 for (let i = 1; i <= Math.min(numPages, 10); i++) sampleIndices.add(i);
@@ -140,24 +189,23 @@ const WatermarkRemoverTool = () => {
                         const s = item.str.trim();
                         if (s.length > 3) {
                             const transform = item.transform.map(n => Math.round(n)).join('_');
-                            pageStrings.add(`${s}|@|${transform}`);
+                            const fontKey = item.fontName;
+                            pageStrings.add(`${s}|@|${transform}|@|${fontKey}`);
                         }
                     }
                     for (const s of pageStrings) {
-                        const [text, transform] = s.split('|@|');
-                        if (!textUsage.has(text)) textUsage.set(text, { count: 0, transforms: new Set() });
+                        const [text, transform, fontKey] = s.split('|@|');
+                        if (!textUsage.has(text)) textUsage.set(text, { count: 0, transforms: new Set(), fonts: new Set() });
                         const entry = textUsage.get(text);
                         entry.count++;
                         entry.transforms.add(transform);
+                        entry.fonts.add(fontKey);
                     }
                 }
             } catch (err) {
                 console.error("Text scan error", err);
             }
 
-            // Identify recurring elements based on text frequency, regardless of absolute transform
-            const sampleCount = Array.from(new Set(textUsage.keys())).length > 0 ? Array.from(textUsage.values())[0].count : 0; // heuristic
-            // Actually, sampleCount is the size of sampleIndices
             const actualSampleCount = new Set([
               ...Array.from({length: Math.min(pages.length, 10)}, (_, i) => i + 1),
               ...Array.from({length: 5}, (_, i) => Math.max(1, Math.floor(pages.length/2)-2) + i).filter(i => i <= pages.length),
@@ -165,12 +213,13 @@ const WatermarkRemoverTool = () => {
             ]).size;
 
             const potentialTextWatermarks = Array.from(textUsage.entries())
-                .filter(([_, data]) => data.count > 1) // On more than one sampled page
+                .filter(([_, data]) => data.count > 1)
                 .map(([text, data]) => ({ 
                     text, 
                     count: data.count, 
                     confidence: data.count / actualSampleCount,
-                    isPositional: data.transforms.size === 1 // True if it's always in the same spot
+                    isPositional: data.transforms.size === 1,
+                    fontName: Array.from(data.fonts)[0] // Take first font used for this recurring text
                 }))
                 .sort((a, b) => b.count - a.count);
             
@@ -189,15 +238,27 @@ const WatermarkRemoverTool = () => {
             
             const autoSelectedObj = new Set();
             const autoSelectedText = new Set();
+            const autoFonts = new Set();
             
             potentialWatermarks.forEach(obj => {
-                if (obj.count / pages.length > 0.6) autoSelectedObj.add(obj.id);
+                if (obj.count / pages.length > 0.8) autoSelectedObj.add(obj.id);
             });
             potentialTextWatermarks.forEach(txt => {
-                if (txt.confidence > 0.6) autoSelectedText.add(txt.text);
+                if (txt.confidence > 0.8) {
+                    autoSelectedText.add(txt.text);
+                    // Extract internal font name (e.g. from g_d0_f1 take f1)
+                    if (txt.fontName) {
+                        const internalName = txt.fontName.split('_').pop();
+                        // Internal names usually look like F1, F2...
+                        // If it's something like f1, normalize to F1 for matching
+                        autoFonts.add(internalName.toUpperCase());
+                    }
+                }
             });
             
             setSelectedObjects(autoSelectedObj);
+            setSelectedText(autoSelectedText);
+            setWatermarkFonts(autoFonts);
             setSelectedText(autoSelectedText);
             setHasAnnotations(totalAnnotations > 0);
             if (totalAnnotations > 0) setRemoveAnnots(true);
@@ -339,9 +400,15 @@ const WatermarkRemoverTool = () => {
 
                 const matchesAny = (decoded) => {
                     const low = decoded.toLowerCase().trim();
-                    // Require minimum 4 chars to avoid blanking individual letters throughout document
-                    if (!low || low.length < 4) return false;
-                    return normalizedTargets.some(t => t.length >= 4 && (low.includes(t) || t.includes(low)));
+                    if (!low || low.length < 3) return false;
+                    
+                    if (normalizedTargets.some(t => low.includes(t) || t.includes(low))) return true;
+                    
+                    // Nuclear Fuzzy Match
+                    if (isNuclearMode) {
+                        return normalizedTargets.some(t => isFuzzyMatch(low, t, 0.8));
+                    }
+                    return false;
                 };
 
                 // Read a single PDF token from content string starting at pos
@@ -371,9 +438,32 @@ const WatermarkRemoverTool = () => {
                         tokens.push(tok); pos=tok.end;
                     }
                     let modified = false;
+                    let currentFontRef = null;
+
                     for(let i=0;i<tokens.length;i++){
                         const t = tokens[i];
                         if(t.type!=='tok') continue;
+
+                        // Track Font Switch (e.g. /F1 12 Tf)
+                        if (t.raw === 'Tf') {
+                            let pi = i - 1;
+                            while (pi >= 0 && (tokens[pi].type === 'ws' || !isNaN(tokens[pi].raw))) pi--;
+                            if (pi >= 0 && tokens[pi].raw.startsWith('/')) {
+                                currentFontRef = tokens[pi].raw.slice(1);
+                            }
+                        }
+
+                        // NUCLEAR OPTION: If current font is a watermark font, strip ALL text operators
+                        if (isNuclearMode && currentFontRef && watermarkFonts.has(currentFontRef)) {
+                            if (['Tj', 'TJ', "'", '"'].includes(t.raw)) {
+                                let pi = i - 1; while (pi >= 0 && tokens[pi].type === 'ws') pi--;
+                                if (pi >= 0 && (tokens[pi].type === 'str' || tokens[pi].type === 'arr')) {
+                                    tokens[pi].raw = t.raw === 'TJ' ? '[]' : '()';
+                                    modified = true;
+                                }
+                            }
+                        }
+
                         // Strip Do calls for deleted XObjects
                         if(t.raw==='Do'){
                             let pi=i-1; while(pi>=0&&tokens[pi].type==='ws')pi--;
@@ -439,8 +529,69 @@ const WatermarkRemoverTool = () => {
                 }
             }
 
-            const pdfBytes = await pdfDoc.save();
-            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+            let finalPdfBytes;
+            
+            // 4. Ultra Mode: AI Inpainting (Layer 3)
+            if (isUltraMode && isCvLoaded) {
+                const finalPdfDoc = await PDFDocument.create();
+                const tempPdfBytes = await pdfDoc.save();
+                const pdfjsDoc = await pdfjsLib.getDocument({ data: tempPdfBytes }).promise;
+
+                for (let i = 1; i <= pdfjsDoc.numPages; i++) {
+                    const page = await pdfjsDoc.getPage(i);
+                    const viewport = page.getViewport({ scale: 2.0 });
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    await page.render({ canvasContext: ctx, viewport }).promise;
+
+                    const src = cv.imread(canvas);
+                    const mask = new cv.Mat.zeros(src.rows, src.cols, cv.CV_8U);
+                    let hasMask = false;
+
+                    aiDetections.forEach(d => {
+                        // If this AI detection was selected (via selectedText)
+                        if (selectedText.has(d.text)) {
+                            // Tesseract coords are relative to its input size (which was 1.5 scale)
+                            const scale = 2.0 / 1.5; 
+                            
+                            const rect = new cv.Rect(
+                                Math.floor(d.bbox.x0 * scale) - 5, 
+                                Math.floor(d.bbox.y0 * scale) - 5, 
+                                Math.floor((d.bbox.x1 - d.bbox.x0) * scale) + 10, 
+                                Math.floor((d.bbox.y1 - d.bbox.y0) * scale) + 10
+                            );
+                            
+                            // Bounds check
+                            rect.x = Math.max(0, rect.x);
+                            rect.y = Math.max(0, rect.y);
+                            rect.width = Math.min(src.cols - rect.x, rect.width);
+                            rect.height = Math.min(src.rows - rect.y, rect.height);
+
+                            cv.rectangle(mask, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), new cv.Scalar(255), -1);
+                            hasMask = true;
+                        }
+                    });
+
+                    if (hasMask) {
+                        cv.inpaint(src, mask, src, 3, cv.INPAINT_TELEA);
+                        cv.imshow(canvas, src);
+                    }
+                    
+                    src.delete(); mask.delete();
+
+                    const imgBytes = canvas.toDataURL('image/jpeg', 0.85);
+                    const img = await finalPdfDoc.embedJpg(imgBytes);
+                    const newPage = finalPdfDoc.addPage([viewport.width, viewport.height]);
+                    newPage.drawImage(img, { x: 0, y: 0, width: viewport.width, height: viewport.height });
+                }
+                finalPdfBytes = await finalPdfDoc.save();
+            } else {
+                finalPdfBytes = await pdfDoc.save();
+            }
+
+            const blob = new Blob([finalPdfBytes], { type: 'application/pdf' });
             const url = URL.createObjectURL(blob);
             setDownloadUrl(url);
             
@@ -465,6 +616,91 @@ const WatermarkRemoverTool = () => {
         if (next.has(text)) next.delete(text);
         else next.add(text);
         setSelectedText(next);
+    };
+
+    const runAiVisualScan = async () => {
+        if (!file) return;
+        setIsAiScanning(true);
+        setAiProgress(0);
+        
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdfjsDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            
+            // Initialize Tesseract Worker (v5+ API compliant)
+            const worker = await createWorker({
+                logger: m => {
+                    if (m && m.status === 'recognizing text') {
+                        setAiProgress(Math.floor(m.progress * 100));
+                    }
+                }
+            });
+
+            // v5+ needs explicit load/init for some setups.
+            await worker.loadLanguage('eng');
+            await worker.initialize('eng');
+
+            const maxPages = Math.min(pdfjsDoc.numPages, 3);
+            const detections = [];
+
+            for (let i = 1; i <= maxPages; i++) {
+                const page = await pdfjsDoc.getPage(i);
+                const viewport = page.getViewport({ scale: 1.5 }); // Balanced scale for speed/accuracy
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                await page.render({ canvasContext: context, viewport: viewport }).promise;
+                
+                const { data: { words } } = await worker.recognize(canvas);
+                
+                words.forEach(word => {
+                    if (word.text.length > 3 && word.confidence > 60) {
+                        detections.push({
+                            text: word.text,
+                            bbox: word.bbox,
+                            page: i
+                        });
+                    }
+                });
+            }
+
+            // Find common patterns across pages
+            const textMap = new Map();
+            detections.forEach(d => {
+                const key = d.text.toLowerCase();
+                if (!textMap.has(key)) textMap.set(key, []);
+                textMap.get(key).push(d);
+            });
+
+            const repeated = [];
+            for (const [text, instances] of textMap.entries()) {
+                if (instances.length >= 2) {
+                    repeated.push({
+                        text: instances[0].text,
+                        count: instances.length,
+                        type: 'AI_VISUAL'
+                    });
+                }
+            }
+
+            setAiDetections(repeated);
+            
+            // Auto-select highly confident AI detections
+            if (repeated.length > 0) {
+                const nextSelected = new Set(selectedText);
+                repeated.forEach(r => nextSelected.add(r.text));
+                setSelectedText(nextSelected);
+            }
+
+            await worker.terminate();
+        } catch (err) {
+            console.error("AI Visual Scan Detailed Error:", err);
+            alert(`AI Visual Scan failed: ${err.message}. Falling back to structural scan.`);
+        } finally {
+            setIsAiScanning(false);
+        }
     };
 
     return (
@@ -598,16 +834,60 @@ const WatermarkRemoverTool = () => {
                             <li style={{ marginBottom: '0.5rem' }}><b>Clean:</b> Rebuilds the document without the watermark data.</li>
                         </ul>
 
-                        <div className="control-item" style={{ marginTop: '1rem', padding: '1rem', background: 'rgba(99,102,241,0.05)', borderRadius: '8px' }}>
-                            <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}><Search size={14} /> Manual Text Scrubber</label>
-                            <input 
-                                type="text" 
-                                placeholder="e.g. VajraDeveloper.in" 
-                                value={targetText} 
-                                onChange={(e) => setTargetText(e.target.value)} 
-                                style={{ fontSize: '0.85rem', width: '100%' }}
-                            />
-                            <p style={{ fontSize: '0.75rem', marginTop: '0.5rem', opacity: 0.7 }}>Enter exact text if it wasn't auto-detected.</p>
+                        <div className="ai-controls" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border-light)', paddingTop: '1.5rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                                <Zap size={18} style={{ color: 'var(--accent-main)' }} />
+                                <h4 style={{ margin: 0, fontSize: '1rem' }}>AI Visual Intelligence</h4>
+                            </div>
+
+                            <button 
+                                className="secondary-btn" 
+                                onClick={runAiVisualScan}
+                                disabled={isAiScanning || !file}
+                                style={{ width: '100%', marginBottom: '1rem', fontSize: '0.85rem' }}
+                            >
+                                {isAiScanning ? <><Loader2 className="animate-spin" size={16} /> Scanning {aiProgress}%</> : 'Run AI Visual Discovery'}
+                            </button>
+
+                            <div className="control-item" style={{ padding: '0.8rem', background: 'rgba(239, 68, 68, 0.05)', borderRadius: '8px', marginBottom: '1rem', border: '1px solid rgba(239, 68, 68, 0.1)' }}>
+                                <label style={{ fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#dc2626', fontWeight: 600 }}>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={isNuclearMode} 
+                                        onChange={(e) => setIsNuclearMode(e.target.checked)}
+                                    />
+                                    Nuclear Mode (Font-Based Excision)
+                                </label>
+                                <p style={{ fontSize: '0.7rem', marginTop: '0.4rem', color: '#991b1b', opacity: 0.8 }}>Aggressively strips watermarks by targeting their underlying fonts. Recommended for stubborn text.</p>
+                            </div>
+
+                            <div className="control-item" style={{ padding: '0.8rem', background: 'rgba(99,102,241,0.05)', borderRadius: '8px', marginBottom: '1rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                                    <label style={{ fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        <input 
+                                            type="checkbox" 
+                                            checked={isUltraMode} 
+                                            onChange={(e) => setIsUltraMode(e.target.checked)}
+                                            disabled={!isCvLoaded}
+                                        />
+                                        Ultra Deep Clean (AI Inpainting)
+                                    </label>
+                                    {!isCvLoaded && <Loader2 className="animate-spin" size={12} style={{ marginLeft: 'auto' }} />}
+                                </div>
+                                <p style={{ fontSize: '0.7rem', marginTop: '0.4rem', opacity: 0.6 }}>Best for scanned PDFs. Uses OpenCV to heal pixels after removal.</p>
+                            </div>
+
+                            <div className="control-item" style={{ padding: '0.8rem', background: 'rgba(99,102,241,0.05)', borderRadius: '8px' }}>
+                                <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}><Search size={14} /> Manual Text Scrubber</label>
+                                <input 
+                                    type="text" 
+                                    placeholder="e.g. vtudeveloper.in" 
+                                    value={targetText} 
+                                    onChange={(e) => setTargetText(e.target.value)} 
+                                    style={{ fontSize: '0.85rem', width: '100%' }}
+                                />
+                                <p style={{ fontSize: '0.7rem', marginTop: '0.4rem', opacity: 0.6 }}>Enter text if it wasn't auto-detected. Use Nuclear Mode for best results.</p>
+                            </div>
                         </div>
                         <div style={{ padding: '0.8rem', background: 'rgba(255, 150, 0, 0.05)', borderRadius: '8px', border: '1px solid rgba(255, 150, 0, 0.2)', display: 'flex', gap: '0.5rem' }}>
                             <AlertCircle size={16} style={{ color: '#f59e0b', flexShrink: 0, marginTop: '2px' }} />
