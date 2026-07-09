@@ -33,6 +33,48 @@ import TermsOfService from './components/TermsOfService';
 import AboutUs from './components/AboutUs';
 import ContactUs from './components/ContactUs';
 import PdfToWordTool from './components/PdfToWordTool';
+import { toolMarketingData } from './data/toolMarketingData';
+
+const pathToMarketingKey = {
+  '/merge-pdf': 'merge',
+  '/split-pdf': 'splitter',
+  '/remove-pages': 'remover',
+  '/extract-pages': 'extract',
+  '/organize-pdf': 'organize',
+  '/compress-pdf': 'compress',
+  '/jpg-to-pdf': 'img2pdf',
+  '/image-to-pdf': 'img2pdf',
+  '/pdf-to-jpg': 'pdf2jpg',
+  '/pdf-to-word': 'pdf2word',
+  '/rotate-pdf': 'rotate',
+  '/page-numbers': 'numberer',
+  '/watermark-pdf': 'watermark',
+  '/crop-pdf': 'crop',
+  '/edit-pdf': 'editor',
+  '/remove-watermark': 'remover_tool',
+  '/protect-pdf': 'protect',
+  '/redact-pdf': 'redact',
+};
+
+const toolKeywords = {
+  'merge': "merge PDF, combine PDF files, PDF merger free, join PDF files online, combine documents",
+  'splitter': "split PDF, extract PDF pages, PDF splitter online, cut PDF pages, separate PDF pages free",
+  'remover': "remove PDF pages, delete PDF pages, delete pages from PDF online, clean PDF, remove pages free",
+  'extract': "extract PDF pages, save PDF pages, extract pages from PDF online, select PDF pages",
+  'organize': "organize PDF, reorder PDF pages, rotate PDF pages, move pages in PDF online, organize documents",
+  'compress': "compress PDF, shrink PDF size, reduce PDF size, PDF compressor online, optimize PDF quality",
+  'img2pdf': "jpg to PDF, image to PDF converter, png to PDF, photos to PDF online, convert jpg to PDF free",
+  'pdf2jpg': "pdf to jpg, convert PDF to images, extract images from PDF, PDF to jpeg converter online",
+  'pdf2word': "pdf to word, convert PDF to docx, PDF to word converter online, editable word document free",
+  'rotate': "rotate PDF, fix PDF orientation, turn PDF pages, rotate PDF online, rotate single page",
+  'numberer': "add page numbers to PDF, PDF page numbering online, insert page numbers, format PDF page numbers",
+  'watermark': "watermark PDF, add watermark online, PDF watermark creator, text watermark, image watermark",
+  'crop': "crop PDF, trim PDF margins, change page size PDF, crop PDF online, adjust PDF view",
+  'editor': "edit PDF online, free PDF editor, write on PDF, annotate PDF, add text to PDF",
+  'remover_tool': "remove watermark from PDF, watermark remover online, clean PDF watermark, delete PDF objects",
+  'protect': "protect PDF, password protect PDF, encrypt PDF, lock PDF document, secure PDF files online",
+  'redact': "redact PDF, black out PDF text, permanently hide PDF info, secure redaction online, GDPR PDF tool"
+};
 
 const categories = [
   {
@@ -118,6 +160,166 @@ function App() {
       setInstallPrompt(e);
     });
   }, []);
+
+  React.useEffect(() => {
+    const path = location.pathname;
+    let title = "SealPDF | Professional PDF Toolkit - Watermark, Merge, Split & More";
+    let description = "SealPDF is a professional, fast, and secure PDF toolkit. Watermark, merge, split, rotate, and number your PDF files for free. No file limits, no registration.";
+    let keywords = "PDF toolkit, watermark PDF, merge PDF, split PDF, PDF pages numberer, PDF rotator, image to PDF, free PDF tools, SealPDF";
+    let canonical = `https://seal-pdf.com${path === '/' ? '' : path}`;
+    
+    let schemaData = null;
+    
+    // Check if path is a tool route
+    const marketingKey = pathToMarketingKey[path];
+    if (marketingKey && toolMarketingData[marketingKey]) {
+      const toolData = toolMarketingData[marketingKey];
+      title = `${toolData.title} | SealPDF`;
+      description = toolData.description;
+      keywords = toolKeywords[marketingKey] || keywords;
+      
+      // Build tool-specific schemas
+      const url = `https://seal-pdf.com${path}`;
+      
+      // WebApplication Schema
+      const webAppSchema = {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "@id": `${url}#webapp`,
+        "name": `SealPDF - ${toolData.title.split(' — ')[0]}`,
+        "url": url,
+        "description": toolData.description,
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "All",
+        "browserRequirements": "Requires HTML5 compatible browser",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      };
+
+      // HowTo Schema
+      const howToSchema = {
+        "@context": "https://schema.org",
+        "@type": "HowTo",
+        "@id": `${url}#howto`,
+        "name": `How to use SealPDF ${toolData.title.split(' — ')[0]}`,
+        "description": `Step-by-step guide to ${toolData.title.toLowerCase()} online for free.`,
+        "step": toolData.steps.map((step, idx) => ({
+          "@type": "HowToStep",
+          "url": `${url}#step-${idx + 1}`,
+          "name": step.title,
+          "text": step.text
+        }))
+      };
+
+      // FAQPage Schema
+      const faqSchema = {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "@id": `${url}#faq`,
+        "mainEntity": toolData.faqs.map(faq => ({
+          "@type": "Question",
+          "name": faq.question,
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": faq.answer
+          }
+        }))
+      };
+
+      schemaData = {
+        "@context": "https://schema.org",
+        "@graph": [webAppSchema, howToSchema, faqSchema]
+      };
+    } else {
+      // Non-tool pages
+      if (path === '/about') {
+        title = "About Us | SealPDF";
+        description = "Learn more about SealPDF, our mission, values, and how we build secure, browser-based tools to simplify your PDF workflow.";
+        keywords = "about us, PDF toolkit story, free PDF mission, SealPDF";
+      } else if (path === '/contact') {
+        title = "Contact Us | SealPDF";
+        description = "Get in touch with the SealPDF team for support, feature requests, or general inquiries.";
+        keywords = "contact, support, feedback, PDF tool help, SealPDF";
+      } else if (path === '/privacy') {
+        title = "Privacy Policy | SealPDF";
+        description = "Read our privacy policy to understand how we protect your files and personal information. Complete local browser safety.";
+        keywords = "privacy policy, data security, PDF privacy, SealPDF";
+      } else if (path === '/terms') {
+        title = "Terms of Service | SealPDF";
+        description = "Read the SealPDF Terms of Service. Understand our usage conditions and security commitments.";
+        keywords = "terms of service, user agreement, PDF tools terms, SealPDF";
+      }
+      
+      // Default Website and Org schemas for non-tool pages
+      schemaData = {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://seal-pdf.com/#website",
+            "name": "SealPDF",
+            "url": "https://seal-pdf.com/",
+            "description": "SealPDF is a professional, fast, and secure PDF toolkit. Watermark, merge, split, rotate, and number your PDF files for free."
+          },
+          {
+            "@type": "Organization",
+            "@id": "https://seal-pdf.com/#organization",
+            "name": "SealPDF",
+            "url": "https://seal-pdf.com/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "https://seal-pdf.com/logo.png"
+            }
+          }
+        ]
+      };
+    }
+    
+    // Update basic tags
+    document.title = title;
+    
+    const descMeta = document.querySelector('meta[name="description"]');
+    if (descMeta) descMeta.setAttribute('content', description);
+    
+    const kwMeta = document.querySelector('meta[name="keywords"]');
+    if (kwMeta) kwMeta.setAttribute('content', keywords);
+    
+    const canonLink = document.getElementById('canonical-link');
+    if (canonLink) canonLink.setAttribute('href', canonical);
+    
+    // Update Open Graph (og:) tags
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) ogTitle.setAttribute('content', title);
+    
+    const ogDesc = document.querySelector('meta[property="og:description"]');
+    if (ogDesc) ogDesc.setAttribute('content', description);
+    
+    const ogUrl = document.querySelector('meta[property="og:url"]');
+    if (ogUrl) ogUrl.setAttribute('content', canonical);
+    
+    // Update Twitter tags
+    const twitterTitle = document.querySelector('meta[property="twitter:title"]');
+    if (twitterTitle) twitterTitle.setAttribute('content', title);
+    
+    const twitterDesc = document.querySelector('meta[property="twitter:description"]');
+    if (twitterDesc) twitterDesc.setAttribute('content', description);
+    
+    const twitterUrl = document.querySelector('meta[property="twitter:url"]');
+    if (twitterUrl) twitterUrl.setAttribute('content', canonical);
+    
+    // Inject JSON-LD Schema
+    let script = document.getElementById('jsonld-schema');
+    if (!script) {
+      script = document.createElement('script');
+      script.id = 'jsonld-schema';
+      script.type = 'application/ld+json';
+      document.head.appendChild(script);
+    }
+    script.text = JSON.stringify(schemaData);
+  }, [location.pathname]);
 
   const handleInstall = async () => {
     if (!installPrompt) return;
@@ -292,7 +494,7 @@ function App() {
         </Routes>
       </main>
 
-      <Footer onLinkClick={(page) => { navigate('/' + page); window.scrollTo(0, 0); }} />
+      <Footer />
       <CookieConsent />
     </div>
   );

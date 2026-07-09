@@ -587,9 +587,20 @@ body {
   flex: 1;
 }
 
+.file-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .file-name {
   font-weight: 600;
   color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .file-meta {
@@ -1192,4 +1203,18 @@ input[type="color"] {
 
 .detect-check {
   color: var(--primary);
+}
+
+@media (max-width: 767px) {
+  .main-content {
+    padding: 1.5rem 1rem;
+  }
+  
+  .glass-card {
+    padding: 1.25rem 1rem;
+  }
+
+  .legal-page-container {
+    padding: 1.5rem 1rem;
+  }
 }

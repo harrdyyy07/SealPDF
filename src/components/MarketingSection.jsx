@@ -136,7 +136,7 @@ const MarketingSection = ({ toolId }) => {
                         </div>
                     </div>
                 </div>
-                <div className="detail-card" style={{ gridColumn: 'span 2' }}>
+                <div className="detail-card colspan-2">
                      <div style={{ display: 'flex', gap: '30px', alignItems: 'center' }}>
                         <div style={{ flex: 1 }}>
                             <h3>Works on Every Device</h3>
