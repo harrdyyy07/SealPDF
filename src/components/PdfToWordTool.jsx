@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { Document, Packer, Paragraph, TextRun, ImageRun, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType } from "docx";
 import { FileText, Download, FileUp, Loader2, AlertCircle, ShieldCheck, Zap, Globe } from 'lucide-react';
+import { createWorker } from 'tesseract.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.mjs`;
 
@@ -32,6 +33,7 @@ const PdfToWordTool = () => {
             return;
         }
 
+        let ocrWorker = null;
         try {
             setIsConverting(true);
             setError('');
@@ -45,20 +47,61 @@ const PdfToWordTool = () => {
             const numPages = pdfDoc.numPages;
             const docChildren = [];
 
+            const getOcrWorker = async () => {
+                if (!ocrWorker) {
+                    setStatusText("Initializing OCR Engine...");
+                    ocrWorker = await createWorker({
+                        logger: m => {
+                            if (m && m.status === 'recognizing text') {
+                                const pageProgress = Math.floor(m.progress * 100);
+                                setStatusText(`Running OCR on Page... ${pageProgress}%`);
+                            }
+                        }
+                    });
+                    await ocrWorker.loadLanguage('eng');
+                    await ocrWorker.initialize('eng');
+                }
+                return ocrWorker;
+            };
+
             for (let i = 1; i <= numPages; i++) {
                 setStatusText(`Analyzing Page ${i} structure...`);
                 const page = await pdfDoc.getPage(i);
-                const textContent = await page.getTextContent({ includeStyles: true });
-                const viewport = page.getViewport({ scale: 1.0 });
-                const { width: pageWidth, height: pageHeight } = viewport;
+                
+                // Get base viewport (scale 1.0) for coordinate sizing
+                const viewportBase = page.getViewport({ scale: 1.0 });
+                const { width: pageWidth, height: pageHeight } = viewportBase;
 
-                // 1. DEEP OPERATOR SCAN (Lines, Borders, Images)
+                // Render page to a canvas at 1.5x scale to force load image objects and prepare for high-quality OCR
+                const renderScale = 1.5;
+                const viewportRender = page.getViewport({ scale: renderScale });
+                const canvas = document.createElement('canvas');
+                canvas.width = viewportRender.width;
+                canvas.height = viewportRender.height;
+                const ctx = canvas.getContext('2d');
+
+                setStatusText(`Rendering Page ${i} for layout extraction...`);
+                await page.render({ canvasContext: ctx, viewport: viewportRender }).promise;
+
+                // Scan text contents
+                let textContent = await page.getTextContent({ includeStyles: true });
+                let items = textContent.items;
+
+                // Deep operator scan for vector paths, lines, and image XObjects
                 const operatorList = await page.getOperatorList();
                 const images = [];
                 const paths = [];
                 let currentPath = [];
                 let currentTransform = [1, 0, 0, 1, 0, 0];
                 let currentFillColor = "000000";
+
+                const applyTransform = (x, y, matrix) => {
+                    const [a, b, c, d, e, f] = matrix;
+                    return {
+                        x: a * x + c * y + e,
+                        y: b * x + d * y + f
+                    };
+                };
 
                 for (let j = 0; j < operatorList.fnArray.length; j++) {
                     const fn = operatorList.fnArray[j];
@@ -69,14 +112,22 @@ const PdfToWordTool = () => {
                             currentTransform = args;
                             break;
                         case pdfjsLib.OPS.moveTo:
-                            currentPath = [{ x: args[0], y: args[1] }];
+                            currentPath = [applyTransform(args[0], args[1], currentTransform)];
                             break;
                         case pdfjsLib.OPS.lineTo:
-                            currentPath.push({ x: args[0], y: args[1] });
+                            currentPath.push(applyTransform(args[0], args[1], currentTransform));
                             break;
                         case pdfjsLib.OPS.rectangle:
                             const [rx, ry, rw, rh] = args;
-                            paths.push({ type: 'rect', x: rx, y: ry, w: rw, h: rh });
+                            const p00_rect = applyTransform(rx, ry, currentTransform);
+                            const p11_rect = applyTransform(rx + rw, ry + rh, currentTransform);
+                            paths.push({
+                                type: 'rect',
+                                x: Math.min(p00_rect.x, p11_rect.x),
+                                y: Math.min(p00_rect.y, p11_rect.y),
+                                w: Math.abs(p11_rect.x - p00_rect.x),
+                                h: Math.abs(p11_rect.y - p00_rect.y)
+                            });
                             break;
                         case pdfjsLib.OPS.stroke:
                         case pdfjsLib.OPS.fill:
@@ -100,144 +151,291 @@ const PdfToWordTool = () => {
                                     img = args[0];
                                 }
 
-                                if (img && img.data) {
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = img.width;
-                                    canvas.height = img.height;
-                                    const ctx = canvas.getContext('2d');
-                                    const imageData = ctx.createImageData(img.width, img.height);
-                                    
-                                    // Handle Grayscale and RGB(A)
-                                    if (img.data.length === img.width * img.height) {
-                                        for (let k = 0, l = 0; k < img.data.length; k++, l += 4) {
-                                            imageData.data[l] = imageData.data[l+1] = imageData.data[l+2] = img.data[k];
-                                            imageData.data[l+3] = 255;
+                                if (img) {
+                                    const imgWidth = img.width;
+                                    const imgHeight = img.height;
+
+                                    const p00_img = applyTransform(0, 0, currentTransform);
+                                    const p11_img = applyTransform(1, 1, currentTransform);
+                                    const imgX = Math.min(p00_img.x, p11_img.x);
+                                    const imgY = Math.min(p00_img.y, p11_img.y);
+                                    const imgW = Math.abs(p11_img.x - p00_img.x);
+                                    const imgH = Math.abs(p11_img.y - p00_img.y);
+
+                                    // Render to image canvas to generate buffer
+                                    const imgCanvas = document.createElement('canvas');
+                                    imgCanvas.width = imgWidth;
+                                    imgCanvas.height = imgHeight;
+                                    const imgCtx = imgCanvas.getContext('2d');
+
+                                    if (img.bitmap) {
+                                        imgCtx.drawImage(img.bitmap, 0, 0);
+                                    } else if (img.data) {
+                                        const imgData = imgCtx.createImageData(imgWidth, imgHeight);
+                                        if (img.data.length === imgWidth * imgHeight) {
+                                            for (let k = 0, l = 0; k < img.data.length; k++, l += 4) {
+                                                imgData.data[l] = imgData.data[l+1] = imgData.data[l+2] = img.data[k];
+                                                imgData.data[l+3] = 255;
+                                            }
+                                        } else if (img.data.length === imgWidth * imgHeight * 3) {
+                                            for (let k = 0, l = 0; k < img.data.length; k += 3, l += 4) {
+                                                imgData.data[l] = img.data[k];
+                                                imgData.data[l+1] = img.data[k+1];
+                                                imgData.data[l+2] = img.data[k+2];
+                                                imgData.data[l+3] = 255;
+                                            }
+                                        } else if (img.data.length === imgWidth * imgHeight * 4) {
+                                            imgData.data.set(img.data);
+                                        } else {
+                                            for (let k = 0; k < Math.min(img.data.length, imgData.data.length); k++) {
+                                                imgData.data[k] = img.data[k];
+                                            }
                                         }
-                                    } else if (img.data.length === img.width * img.height * 3) {
-                                        for (let k = 0, l = 0; k < img.data.length; k += 3, l += 4) {
-                                            imageData.data[l] = img.data[k];
-                                            imageData.data[l+1] = img.data[k+1];
-                                            imageData.data[l+2] = img.data[k+2];
-                                            imageData.data[l+3] = 255;
-                                        }
+                                        imgCtx.putImageData(imgData, 0, 0);
                                     } else {
-                                        imageData.data.set(img.data);
+                                        try {
+                                            imgCtx.drawImage(img, 0, 0);
+                                        } catch (drawErr) {
+                                            console.error("Direct image render failed:", drawErr);
+                                        }
                                     }
-                                    
-                                    ctx.putImageData(imageData, 0, 0);
-                                    const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+
+                                    const blob = await new Promise(r => imgCanvas.toBlob(r, 'image/png'));
                                     const arrayBuffer = await blob.arrayBuffer();
-                                    
+
                                     images.push({
                                         buffer: arrayBuffer,
-                                        width: Math.abs(currentTransform[0]),
-                                        height: Math.abs(currentTransform[3]),
-                                        x: currentTransform[4],
-                                        y: pageHeight - currentTransform[5] - Math.abs(currentTransform[3])
+                                        width: imgW,
+                                        height: imgH,
+                                        x: imgX,
+                                        y: pageHeight - imgY - imgH
                                     });
                                 }
-                            } catch (e) { console.error("Img error", e); }
+                            } catch (e) {
+                                console.error("Image extraction error:", e);
+                            }
                             break;
                     }
                 }
 
-                // 2. GRID RECONSTRUCTION & BORDER DETECTION
-                // Identify structural borders from rectangles and paths
-                const borders = paths.filter(p => {
-                    if (p.type === 'rect') return Math.abs(p.w) > 50 || Math.abs(p.h) > 50;
-                    if (p.type === 'path') {
-                        const p1 = p.points[0];
-                        const p2 = p.points[p.points.length - 1];
-                        return Math.abs(p1.x - p2.x) > 50 || Math.abs(p1.y - p2.y) > 50;
+                // Detect scanned pages (no text content)
+                const hasText = items.filter(item => item.str && item.str.trim().length > 0).length >= 5;
+                if (!hasText) {
+                    setStatusText(`Page ${i} is scanned. Running OCR...`);
+                    try {
+                        const ocrWorker = await getOcrWorker();
+                        const { data: { lines } } = await ocrWorker.recognize(canvas);
+                        items = lines.map(line => {
+                            const x = line.bbox.x0 / renderScale;
+                            const y = pageHeight - (line.bbox.y0 / renderScale);
+                            const height = (line.bbox.y1 - line.bbox.y0) / renderScale;
+                            const width = (line.bbox.x1 - line.bbox.x0) / renderScale;
+                            const fontSize = Math.round(height);
+                            return {
+                                str: line.text.replace(/\n/g, ' ').trim(),
+                                transform: [fontSize, 0, 0, fontSize, x, y],
+                                width: width,
+                                fontName: 'sans-serif'
+                            };
+                        });
+                    } catch (ocrErr) {
+                        console.error("OCR execution error:", ocrErr);
+                        items = [];
                     }
-                    return false;
-                });
+                }
 
-                // 3. TEXT & LAYOUT ASSEMBLY
-                const items = textContent.items.sort((a, b) => b.transform[5] - a.transform[5] || a.transform[4] - b.transform[4]);
-                
-                let lastY = -1;
-                let lastX = -1;
-                let currentPara = null;
-
-                items.forEach((item) => {
-                    const x = item.transform[4];
-                    const y = item.transform[5];
-                    const fontSize = Math.round(Math.sqrt(item.transform[0]**2 + item.transform[1]**2));
-                    const isBold = item.fontName?.toLowerCase().includes('bold') || false;
-                    const isItalic = item.fontName?.toLowerCase().includes('italic') || false;
-                    
-                    // Detect Color (simplified - using styles map)
-                    const style = textContent.styles[item.fontName];
-                    const color = style?.color || "000000";
-
-                    // Line Grouping Logic
-                    if (Math.abs(y - lastY) > 5) {
-                        // New Line
-                        const vGap = lastY !== -1 ? Math.max(0, (lastY - y) - fontSize) : 0;
-                        
-                        // Check if this line is part of a bordered area
-                        const hasBorder = borders.some(b => {
-                            const by = pageHeight - b.y;
-                            return Math.abs(by - (pageHeight - y)) < 20;
-                        });
-
-                        currentPara = new Paragraph({
-                            spacing: { before: vGap * 20 },
-                            indent: { left: Math.max(0, x) * 20 },
-                            border: hasBorder ? { bottom: { color: "000000", space: 1, style: BorderStyle.SINGLE, size: 6 } } : undefined,
-                            children: [
-                                new TextRun({
-                                    text: item.str,
-                                    size: fontSize * 2,
-                                    bold: isBold,
-                                    italics: isItalic,
-                                    color: color.replace('#', '')
-                                })
-                            ]
-                        });
-                        docChildren.push(currentPara);
-                        lastY = y;
-                        lastX = x + (item.width || item.str.length * (fontSize * 0.5));
-                    } else {
-                        // Same Line
-                        const hGap = x - lastX;
-                        if (hGap > 8) {
-                            currentPara.addChildElement(new TextRun({ text: " ".repeat(Math.floor(hGap / (fontSize * 0.3))) }));
+                // Extract horizontal lines (separators)
+                const horizontalLines = [];
+                paths.forEach(p => {
+                    if (p.type === 'rect') {
+                        if (p.h < 3 && p.w > 15) {
+                            horizontalLines.push({
+                                y: pageHeight - p.y - p.h,
+                                x: p.x,
+                                width: p.w
+                            });
                         }
-                        currentPara.addChildElement(new TextRun({
-                            text: item.str,
-                            size: fontSize * 2,
-                            bold: isBold,
-                            italics: isItalic,
-                            color: color.replace('#', '')
-                        }));
-                        lastX = x + (item.width || item.str.length * (fontSize * 0.5));
+                    } else if (p.type === 'path' && p.points.length >= 2) {
+                        for (let k = 0; k < p.points.length - 1; k++) {
+                            const pt1 = p.points[k];
+                            const pt2 = p.points[k+1];
+                            if (Math.abs(pt1.y - pt2.y) < 2 && Math.abs(pt1.x - pt2.x) > 15) {
+                                horizontalLines.push({
+                                    y: pageHeight - pt1.y,
+                                    x: Math.min(pt1.x, pt2.x),
+                                    width: Math.abs(pt1.x - pt2.x)
+                                });
+                            }
+                        }
                     }
                 });
 
-                // 4. IMAGE POSITIONING
-                images.forEach(img => {
-                    docChildren.push(new Paragraph({
-                        alignment: AlignmentType.CENTER,
-                        spacing: { before: 200, after: 200 },
-                        children: [
-                            new ImageRun({
-                                data: img.buffer,
-                                transformation: {
-                                    width: Math.min(500, img.width),
-                                    height: (img.height / img.width) * Math.min(500, img.width),
-                                },
-                            }),
-                        ],
-                    }));
+                // Group text items into lines
+                const textLines = [];
+                const sortedItems = [...items].sort((a, b) => b.transform[5] - a.transform[5]);
+
+                sortedItems.forEach(item => {
+                    const y = item.transform[5];
+                    const foundLine = textLines.find(line => Math.abs(line.y - y) < 6);
+                    if (foundLine) {
+                        foundLine.items.push(item);
+                    } else {
+                        textLines.push({
+                            y: y,
+                            items: [item]
+                        });
+                    }
                 });
 
-                // Page Break
+                textLines.forEach(line => {
+                    line.items.sort((a, b) => a.transform[4] - b.transform[4]);
+                });
+
+                // Combine elements and sort top-to-bottom
+                const pageElements = [];
+
+                textLines.forEach(line => {
+                    let maxFontSize = 10;
+                    line.items.forEach(item => {
+                        const fs = Math.round(Math.sqrt(item.transform[0]**2 + item.transform[1]**2));
+                        if (fs > maxFontSize) maxFontSize = fs;
+                    });
+                    pageElements.push({
+                        type: 'text',
+                        y: pageHeight - line.y,
+                        height: maxFontSize,
+                        data: line
+                    });
+                });
+
+                images.forEach(img => {
+                    pageElements.push({
+                        type: 'image',
+                        y: img.y,
+                        height: img.height,
+                        data: img
+                    });
+                });
+
+                horizontalLines.forEach(line => {
+                    pageElements.push({
+                        type: 'line',
+                        y: line.y,
+                        height: 1,
+                        data: line
+                    });
+                });
+
+                pageElements.sort((a, b) => a.y - b.y);
+
+                // Build DOCX structure for the page
+                let lastElementBottomY = -1;
+
+                pageElements.forEach(el => {
+                    const currentTopY = el.y;
+                    const vGap = lastElementBottomY !== -1 ? Math.max(0, currentTopY - lastElementBottomY) : 0;
+                    const spacingBefore = Math.round(vGap * 20);
+
+                    if (el.type === 'text') {
+                        const line = el.data;
+                        const runs = [];
+                        let lastX = -1;
+
+                        line.items.forEach((item, idx) => {
+                            const x = item.transform[4];
+                            const fontSize = Math.round(Math.sqrt(item.transform[0]**2 + item.transform[1]**2));
+                            const isBold = item.fontName?.toLowerCase().includes('bold') || false;
+                            const isItalic = item.fontName?.toLowerCase().includes('italic') || item.fontName?.toLowerCase().includes('oblique') || false;
+
+                            const style = textContent.styles[item.fontName];
+                            const color = style?.color || "000000";
+
+                            if (idx > 0) {
+                                const hGap = x - lastX;
+                                if (hGap > 4) {
+                                    const spaces = Math.max(1, Math.floor(hGap / (fontSize * 0.4)));
+                                    runs.push(new TextRun({ text: " ".repeat(spaces), size: fontSize * 2 }));
+                                }
+                            }
+
+                            runs.push(new TextRun({
+                                text: item.str,
+                                size: fontSize * 2,
+                                bold: isBold,
+                                italics: isItalic,
+                                color: color.replace('#', '')
+                            }));
+
+                            lastX = x + (item.width || item.str.length * (fontSize * 0.5));
+                        });
+
+                        const firstItem = line.items[0];
+                        const indentLeft = Math.max(0, firstItem.transform[4]) * 20;
+
+                        docChildren.push(new Paragraph({
+                            spacing: { before: spacingBefore },
+                            indent: { left: Math.round(indentLeft) },
+                            children: runs
+                        }));
+
+                        lastElementBottomY = el.y + el.height;
+
+                    } else if (el.type === 'image') {
+                        const img = el.data;
+                        
+                        const imgCenter = img.x + img.width / 2;
+                        const pageCenter = pageWidth / 2;
+                        let imgAlign = AlignmentType.LEFT;
+                        let imgIndent = undefined;
+
+                        if (Math.abs(imgCenter - pageCenter) < 50) {
+                            imgAlign = AlignmentType.CENTER;
+                        } else {
+                            imgIndent = { left: Math.round(Math.max(0, img.x) * 20) };
+                        }
+
+                        const displayWidth = Math.min(pageWidth - 80, img.width);
+                        const displayHeight = (img.height / img.width) * displayWidth;
+
+                        docChildren.push(new Paragraph({
+                            alignment: imgAlign,
+                            indent: imgIndent,
+                            spacing: { before: spacingBefore, after: 100 },
+                            children: [
+                                new ImageRun({
+                                    data: img.buffer,
+                                    transformation: {
+                                        width: displayWidth,
+                                        height: displayHeight,
+                                    },
+                                }),
+                            ],
+                        }));
+
+                        lastElementBottomY = el.y + img.height;
+
+                    } else if (el.type === 'line') {
+                        const line = el.data;
+                        
+                        const indentLeft = Math.max(0, line.x) * 20;
+                        const indentRight = Math.max(0, pageWidth - line.x - line.width) * 20;
+
+                        docChildren.push(new Paragraph({
+                            spacing: { before: spacingBefore, after: 100 },
+                            indent: { left: Math.round(indentLeft), right: Math.round(indentRight) },
+                            border: {
+                                bottom: { color: "000000", space: 1, style: BorderStyle.SINGLE, size: 6 }
+                            }
+                        }));
+
+                        lastElementBottomY = el.y + el.height;
+                    }
+                });
+
                 if (i < numPages) {
                     docChildren.push(new Paragraph({ children: [new TextRun({ text: "", break: 1 })] }));
                 }
-                
+
                 setProgress(Math.round((i / numPages) * 100));
             }
 
@@ -256,6 +454,9 @@ const PdfToWordTool = () => {
             console.error(err);
             setError('Conversion failed: ' + err.message);
         } finally {
+            if (ocrWorker) {
+                await ocrWorker.terminate();
+            }
             setIsConverting(false);
         }
     };
