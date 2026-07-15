@@ -8,7 +8,15 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.png', 'logo.png', 'robots.txt'],
+      includeAssets: ['favicon.png', 'logo.png', 'robots.txt', 'sitemap.xml'],
+      workbox: {
+        navigateFallbackDenylist: [
+          /^\/sitemap\.xml$/,
+          /^\/robots\.txt$/,
+          /^\/ads\.txt$/,
+          /^\/googleed8f3eaef53d5729\.html$/
+        ]
+      },
       manifest: {
         name: 'SealPDF Professional Toolkit',
         short_name: 'SealPDF',
