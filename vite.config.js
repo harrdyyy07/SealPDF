@@ -8,7 +8,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.png', 'logo.png', 'robots.txt', 'sitemap.xml'],
+      includeAssets: ['favicon.ico', 'favicon.png', 'favicon-512.png', 'logo.png', 'robots.txt', 'sitemap.xml'],
       workbox: {
         navigateFallbackDenylist: [
           /^\/sitemap\.xml$/,
@@ -31,12 +31,12 @@ export default defineConfig({
             type: 'image/png'
           },
           {
-            src: 'favicon.png',
+            src: 'favicon-512.png',
             sizes: '512x512',
             type: 'image/png'
           },
           {
-            src: 'favicon.png',
+            src: 'favicon-512.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable'
