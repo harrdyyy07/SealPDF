@@ -33,6 +33,10 @@ import TermsOfService from './components/TermsOfService';
 import AboutUs from './components/AboutUs';
 import ContactUs from './components/ContactUs';
 import PdfToWordTool from './components/PdfToWordTool';
+import GuidesList from './components/GuidesList';
+import GuideDetail from './components/GuideDetail';
+import HelpCenter from './components/HelpCenter';
+import { guidesData } from './data/guidesData';
 import { toolMarketingData } from './data/toolMarketingData';
 
 const pathToMarketingKey = {
@@ -251,31 +255,106 @@ function App() {
         title = "Terms of Service | SealPDF";
         description = "Read the SealPDF Terms of Service. Understand our usage conditions and security commitments.";
         keywords = "terms of service, user agreement, PDF tools terms, SealPDF";
+      } else if (path === '/guides') {
+        title = "Guides & Resources | SealPDF";
+        description = "Read our expert-written, comprehensive PDF guides. Learn about password protection, document watermarks, compression efficiency, layout integrity, and GDPR compliance.";
+        keywords = "PDF guides, how-to PDF, password protect guide, compress PDF guide, document safety, GDPR compliance PDF";
+        
+        schemaData = {
+          "@context": "https://schema.org",
+          "@type": "CollectionPage",
+          "@id": "https://seal-pdf.com/guides#collection",
+          "name": "SealPDF Guides & Technical Resources",
+          "url": "https://seal-pdf.com/guides",
+          "description": "Educational articles, guides, and tutorials on managing, optimizing, and protecting PDF files securely."
+        };
+      } else if (path.startsWith('/guides/')) {
+        const slug = path.split('/')[2];
+        const guide = guidesData.find(g => g.slug === slug);
+        if (guide) {
+          title = `${guide.title} | SealPDF Guides`;
+          description = guide.description;
+          keywords = guide.keywords;
+          
+          const url = `https://seal-pdf.com${path}`;
+          schemaData = {
+            "@context": "https://schema.org",
+            "@type": "TechArticle",
+            "@id": `${url}#article`,
+            "headline": guide.title,
+            "description": guide.description,
+            "image": "https://seal-pdf.com/logo.png",
+            "author": {
+              "@type": "Organization",
+              "name": "SealPDF"
+            },
+            "publisher": {
+              "@type": "Organization",
+              "name": "SealPDF",
+              "logo": {
+                "@type": "ImageObject",
+                "url": "https://seal-pdf.com/logo.png"
+              }
+            },
+            "datePublished": "2026-07-21T00:00:00Z",
+            "mainEntityOfPage": url
+          };
+        }
+      } else if (path === '/help') {
+        title = "Help & Support Center | SealPDF";
+        description = "Get answers to frequently asked questions about SealPDF file processing security, GDPR compliance, and tools support.";
+        keywords = "help center, FAQ, support, PDF processing, local browser processing, GDPR FAQ, SealPDF support";
+        
+        schemaData = {
+          "@context": "https://schema.org",
+          "@type": "FAQPage",
+          "@id": "https://seal-pdf.com/help#faq",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "How does SealPDF process my files?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Most tools run client-side directly in your browser using JavaScript and WebAssembly. Files never leave your local device."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Is SealPDF GDPR compliant?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes, we do not store files longer than required, and local tools upload nothing."
+              }
+            }
+          ]
+        };
       }
       
-      // Default Website and Org schemas for non-tool pages
-      schemaData = {
-        "@context": "https://schema.org",
-        "@graph": [
-          {
-            "@type": "WebSite",
-            "@id": "https://seal-pdf.com/#website",
-            "name": "SealPDF",
-            "url": "https://seal-pdf.com/",
-            "description": "SealPDF is a professional, fast, and secure PDF toolkit. Watermark, merge, split, rotate, and number your PDF files for free."
-          },
-          {
-            "@type": "Organization",
-            "@id": "https://seal-pdf.com/#organization",
-            "name": "SealPDF",
-            "url": "https://seal-pdf.com/",
-            "logo": {
-              "@type": "ImageObject",
-              "url": "https://seal-pdf.com/logo.png"
+      // Default Website and Org schemas for non-tool pages if schemaData not set
+      if (!schemaData) {
+        schemaData = {
+          "@context": "https://schema.org",
+          "@graph": [
+            {
+              "@type": "WebSite",
+              "@id": "https://seal-pdf.com/#website",
+              "name": "SealPDF",
+              "url": "https://seal-pdf.com/",
+              "description": "SealPDF is a professional, fast, and secure PDF toolkit. Watermark, merge, split, rotate, and number your PDF files for free."
+            },
+            {
+              "@type": "Organization",
+              "@id": "https://seal-pdf.com/#organization",
+              "name": "SealPDF",
+              "url": "https://seal-pdf.com/",
+              "logo": {
+                "@type": "ImageObject",
+                "url": "https://seal-pdf.com/logo.png"
+              }
             }
-          }
-        ]
-      };
+          ]
+        };
+      }
     }
     
     // Update basic tags
@@ -403,6 +482,7 @@ function App() {
             <Link to="/merge-pdf" className={`nav-item ${location.pathname === '/merge-pdf' ? 'active' : ''}`}>Merge</Link>
             <Link to="/split-pdf" className={`nav-item ${location.pathname === '/split-pdf' ? 'active' : ''}`}>Split</Link>
             <Link to="/jpg-to-pdf" className={`nav-item ${location.pathname === '/jpg-to-pdf' ? 'active' : ''}`}>JPG to PDF</Link>
+            <Link to="/guides" className={`nav-item ${location.pathname.startsWith('/guides') ? 'active' : ''}`}>Guides</Link>
           </nav>
         </div>
 
@@ -451,6 +531,8 @@ function App() {
           </div>
           <div className="mobile-drawer-links">
             <Link to="/" onClick={() => setMobileMenuOpen(false)}>Home</Link>
+            <Link to="/guides" onClick={() => setMobileMenuOpen(false)}>Guides</Link>
+            <Link to="/help" onClick={() => setMobileMenuOpen(false)}>Help Center</Link>
             <div className="mobile-drawer-divider"></div>
             {categories.map((category, idx) => (
               <div key={idx} className="mobile-drawer-category">
@@ -474,6 +556,9 @@ function App() {
           <Route path="/terms" element={<TermsOfService onBack={() => navigate('/')} />} />
           <Route path="/about" element={<AboutUs onBack={() => navigate('/')} />} />
           <Route path="/contact" element={<ContactUs onBack={() => navigate('/')} />} />
+          <Route path="/guides" element={<GuidesList />} />
+          <Route path="/guides/:slug" element={<GuideDetail />} />
+          <Route path="/help" element={<HelpCenter />} />
           <Route path="/image-to-pdf" element={<ImageToPdfTool />} /> {/* Legacy redirect mapping */}
 
           {allTools.map(tool => (
