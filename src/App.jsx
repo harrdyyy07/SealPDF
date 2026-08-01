@@ -410,6 +410,31 @@ function App() {
   };
 
 
+  const homeFaqs = [
+    {
+      q: "How does SealPDF protect my document privacy?",
+      a: "SealPDF uses advanced client-side WebAssembly technology. Most document operations (like merging, splitting, watermarking, rotating, and numbering) run directly inside your web browser engine. Your files are processed locally on your device and are never uploaded to any remote server."
+    },
+    {
+      q: "Are there any file size limits or usage restrictions?",
+      a: "SealPDF offers free processing with generous file capacity. Because local tools leverage your device's memory, you can manipulate multi-page PDFs and high-resolution files without strict cloud caps."
+    },
+    {
+      q: "Can I use SealPDF on mobile devices or smartphones?",
+      a: "Yes! SealPDF is fully responsive and optimized for mobile web browsers across iOS, Android, macOS, Windows, and Linux. No app installation is required."
+    },
+    {
+      q: "Is SealPDF compliant with GDPR and CCPA privacy standards?",
+      a: "Yes. SealPDF strictly adheres to GDPR and CCPA privacy principles. Because we operate with a client-side execution paradigm, we do not inspect, retain, or monetize your personal document data."
+    },
+    {
+      q: "What is the difference between visual hiding and programmatic redaction?",
+      a: "Visual hiding places a dark block over text while leaving underlying text selectable in the document layout. Programmatic redaction, offered by SealPDF's Redact Tool, permanently purges the raw vector data and text characters from the binary stream so it cannot be recovered."
+    }
+  ];
+
+  const [openHomeFaq, setOpenHomeFaq] = useState(null);
+
   const renderHome = () => (
     <>
       <section className="home-hero">
@@ -439,6 +464,107 @@ function App() {
           </div>
         ))}
       </div>
+
+      <section className="home-rich-content" style={{ marginTop: '4rem', borderTop: '1px solid var(--border-color)', paddingTop: '4rem' }}>
+        <div style={{ maxWidth: '1000px', margin: '0 auto', color: 'var(--text-main)', lineHeight: 1.7 }}>
+          
+          {/* Section 1: Client-Side Security */}
+          <div style={{ marginBottom: '3.5rem', background: 'var(--card-bg, rgba(255,255,255,0.02))', padding: '2.5rem', borderRadius: '16px', border: '1px solid var(--border-color)' }}>
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, marginBottom: '1rem', color: 'var(--text-main)' }}>
+              Why Browser-Based Client-Side PDF Processing is Superior
+            </h2>
+            <p style={{ marginBottom: '1rem', color: 'var(--text-muted)' }}>
+              In traditional digital workflows, editing or organizing PDF files required transmitting confidential files to cloud-based servers. Every upload carries inherent risks of data interception, unauthorized archiving, or compliance breaches under stringent regulations such as GDPR, HIPAA, and CCPA.
+            </p>
+            <p style={{ marginBottom: '1rem', color: 'var(--text-muted)' }}>
+              <strong>SealPDF changes this paradigm completely.</strong> Powered by compiled WebAssembly and native HTML5 APIs, SealPDF executes core document transformations—such as page merging, splitting, watermarking, page numbering, and margin cropping—entirely inside your browser's sandboxed memory space.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.5rem', marginTop: '1.5rem' }}>
+              <div style={{ padding: '1.2rem', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.4rem' }}>Zero Cloud Retention</h3>
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>Your financial records, legal contracts, and personal identity documents remain strictly on your local device.</p>
+              </div>
+              <div style={{ padding: '1.2rem', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.4rem' }}>Instantaneous Speed</h3>
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>Bypass bandwidth bottlenecks and upload wait times. Processing happens instantly at hardware speed.</p>
+              </div>
+              <div style={{ padding: '1.2rem', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '0.4rem' }}>Universal Compatibility</h3>
+                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>Runs seamlessly across Windows, macOS, Linux, iOS, and Android without installing heavy desktop software.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Comprehensive Capabilities */}
+          <div style={{ marginBottom: '3.5rem' }}>
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, marginBottom: '1.5rem', textAlign: 'center' }}>
+              Comprehensive Suite of Free PDF Management Tools
+            </h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem' }}>
+              <div style={{ padding: '1.8rem', background: 'var(--card-bg, rgba(255,255,255,0.02))', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--primary)' }}>Document Organization</h3>
+                <p style={{ fontSize: '0.95rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  Combine multiple independent PDFs into a cohesive report with our PDF Merger. Split long documents into targeted chapters, remove redundant pages, or extract specific page ranges with pixel-perfect fidelity.
+                </p>
+              </div>
+              <div style={{ padding: '1.8rem', background: 'var(--card-bg, rgba(255,255,255,0.02))', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--primary)' }}>Conversion & Optimization</h3>
+                <p style={{ fontSize: '0.95rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  Convert high-resolution image sets (JPG, PNG) into standard PDF documents or extract embedded document pages back into high-fidelity image formats. Shrink bulky PDF files using intelligent compression algorithms.
+                </p>
+              </div>
+              <div style={{ padding: '1.8rem', background: 'var(--card-bg, rgba(255,255,255,0.02))', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--primary)' }}>Security & Redaction</h3>
+                <p style={{ fontSize: '0.95rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  Encrypt files with 256-bit AES password protection, apply custom watermarks to protect proprietary copyrights, or permanently redact sensitive personal data prior to public release.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Educational Resources Link */}
+          <div style={{ marginBottom: '3.5rem', background: 'linear-gradient(135deg, rgba(59,130,246,0.1), rgba(147,51,234,0.1))', padding: '2.5rem', borderRadius: '16px', border: '1px solid rgba(59,130,246,0.2)', textAlign: 'center' }}>
+            <h2 style={{ fontSize: '1.7rem', fontWeight: 700, marginBottom: '0.75rem' }}>Educational PDF Technical Resources & Guides</h2>
+            <p style={{ maxWidth: '700px', margin: '0 auto 1.5rem', color: 'var(--text-muted)' }}>
+              Master document security, AES encryption standards, layout optimization, and PDF compliance guidelines with our in-depth technical guides written by experts.
+            </p>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+              <Link to="/guides/pdf-security-guide" style={{ background: 'var(--primary)', color: '#fff', padding: '0.75rem 1.5rem', borderRadius: '8px', textDecoration: 'none', fontWeight: 600, fontSize: '0.95rem' }}>
+                Read Security Guide →
+              </Link>
+              <Link to="/guides" style={{ background: 'rgba(255,255,255,0.1)', color: 'var(--text-main)', padding: '0.75rem 1.5rem', borderRadius: '8px', textDecoration: 'none', fontWeight: 600, fontSize: '0.95rem', border: '1px solid var(--border-color)' }}>
+                Explore All Guides
+              </Link>
+            </div>
+          </div>
+
+          {/* Section 4: Homepage FAQs */}
+          <div style={{ marginBottom: '2rem' }}>
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 700, marginBottom: '1.5rem', textAlign: 'center' }}>
+              Frequently Asked Questions
+            </h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {homeFaqs.map((faq, idx) => (
+                <div key={idx} style={{ background: 'var(--card-bg, rgba(255,255,255,0.02))', borderRadius: '10px', border: '1px solid var(--border-color)', overflow: 'hidden' }}>
+                  <button
+                    onClick={() => setOpenHomeFaq(openHomeFaq === idx ? null : idx)}
+                    style={{ width: '100%', padding: '1.25rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '1.05rem', fontWeight: 600, textAlign: 'left', cursor: 'pointer' }}
+                  >
+                    <span>{faq.q}</span>
+                    <span style={{ fontSize: '1.4rem', color: 'var(--primary)', lineHeight: 1 }}>{openHomeFaq === idx ? '−' : '+'}</span>
+                  </button>
+                  {openHomeFaq === idx && (
+                    <div style={{ padding: '0 1.5rem 1.25rem', color: 'var(--text-muted)', fontSize: '0.95rem', lineHeight: 1.6, borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                      {faq.a}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+        </div>
+      </section>
     </>
   );
 
