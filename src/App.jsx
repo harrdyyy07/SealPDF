@@ -412,7 +412,7 @@ function App() {
 
   const homeFaqs = [
     {
-      q: "How does SealPDF protect my document privacy?",
+      q: "How does Seal-PDF protect my document privacy?",
       a: "SealPDF uses advanced client-side WebAssembly technology. Most document operations (like merging, splitting, watermarking, rotating, and numbering) run directly inside your web browser engine. Your files are processed locally on your device and are never uploaded to any remote server."
     },
     {
