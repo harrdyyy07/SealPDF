@@ -417,7 +417,7 @@ function App() {
     },
     {
       q: "Are there any file size limits or usage restrictions?",
-      a: "SealPDF offers free processing with generous file capacity. Because local tools leverage your device's memory, you can manipulate multi-page PDFs and high-resolution files without strict cloud caps."
+      a: "Seal-PDF offers free processing with generous file capacity. Because local tools leverage your device's memory, you can manipulate multi-page PDFs and high-resolution files without strict cloud caps."
     },
     {
       q: "Can I use SealPDF on mobile devices or smartphones?",
