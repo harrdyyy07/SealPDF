@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Eraser,
     Search,
@@ -10,11 +10,25 @@ import {
     X,
     AlertCircle,
     Info,
-    Zap
+    Zap,
+    Eye,
+    EyeOff,
+    MousePointer,
+    ZoomIn,
+    ZoomOut,
+    RotateCcw,
+    Sparkles,
+    Sliders,
+    ChevronLeft,
+    ChevronRight,
+    Check,
+    Layers,
+    ShieldCheck,
+    Square
 } from 'lucide-react';
-import { PDFDocument, PDFName, PDFRawStream, PDFArray, PDFDict } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFArray, PDFDict, decodePDFRawStream } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
-import { createWorker } from 'tesseract.js';
+import pako from 'pako';
 
 // Setup pdf.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
@@ -22,60 +36,242 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs
 import AuthDownloadWrapper from './AuthDownloadWrapper';
 import MarketingSection from './MarketingSection';
 
-// --- UTILS ---
-const levenshteinDistance = (s, t) => {
-    if (!s || !t) return 99;
-    const m = s.length, n = t.length;
-    const d = Array.from({ length: m + 1 }, () => new Uint8Array(n + 1));
-    for (let i = 0; i <= m; i++) d[i][0] = i;
-    for (let j = 0; j <= n; j++) d[0][j] = j;
-    for (let i = 1; i <= m; i++) {
-        for (let j = 1; j <= n; j++) {
-            const cost = s[i - 1] === t[j - 1] ? 0 : 1;
-            d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+// --- UTILITIES & STREAM TOKENIZER ---
+
+// Robust PDF content stream tokenizer that never hangs
+const tokenizeStream = (s) => {
+    const tokens = [];
+    let i = 0;
+    const len = s.length;
+    while (i < len) {
+        const start = i;
+        const ch = s[i];
+        if (ch <= ' ' || ch === '\x00') {
+            while (i < len && (s[i] <= ' ' || s[i] === '\x00')) i++;
+            tokens.push({ type: 'ws', raw: s.slice(start, i) });
+        } else if (ch === '%') {
+            while (i < len && s[i] !== '\r' && s[i] !== '\n') i++;
+            tokens.push({ type: 'comment', raw: s.slice(start, i) });
+        } else if (ch === '(') {
+            let depth = 0;
+            while (i < len) {
+                if (s[i] === '\\') { i += 2; continue; }
+                if (s[i] === '(') depth++;
+                else if (s[i] === ')') depth--;
+                i++;
+                if (depth === 0) break;
+            }
+            tokens.push({ type: 'str', raw: s.slice(start, i) });
+        } else if (ch === '<' && s[i + 1] === '<') {
+            i += 2;
+            tokens.push({ type: 'dict_open', raw: '<<' });
+        } else if (ch === '>' && s[i + 1] === '>') {
+            i += 2;
+            tokens.push({ type: 'dict_close', raw: '>>' });
+        } else if (ch === '<') {
+            while (i < len && s[i] !== '>') i++;
+            if (i < len) i++;
+            tokens.push({ type: 'hex', raw: s.slice(start, i) });
+        } else if (ch === '[') {
+            i++;
+            tokens.push({ type: 'arr_open', raw: '[' });
+        } else if (ch === ']') {
+            i++;
+            tokens.push({ type: 'arr_close', raw: ']' });
+        } else if (ch === '/') {
+            i++;
+            while (i < len && !/[\x00\t\n\x0c\r ()\[\]{}<>\/%]/.test(s[i])) i++;
+            tokens.push({ type: 'name', raw: s.slice(start, i) });
+        } else {
+            while (i < len && !/[\x00\t\n\x0c\r ()\[\]{}<>\/%]/.test(s[i])) i++;
+            tokens.push({ type: 'tok', raw: s.slice(start, i) });
+        }
+        if (i === start) i++; // guarantee progress
+    }
+    return tokens;
+};
+
+// Decode a PDF string token (literal string or hex string) to JavaScript string
+const decodePdfToken = (rawToken) => {
+    if (!rawToken) return '';
+    const raw = rawToken.trim();
+    if (raw.startsWith('<') && raw.endsWith('>')) {
+        const hex = raw.slice(1, -1).replace(/\s/g, '');
+        let s = '';
+        for (let k = 0; k < hex.length; k += 2) {
+            const byteVal = parseInt(hex.substr(k, 2) || '0', 16);
+            if (byteVal > 0) s += String.fromCharCode(byteVal);
+        }
+        return s;
+    }
+    if (raw.startsWith('(') && raw.endsWith(')')) {
+        const inner = raw.slice(1, -1);
+        let s = '', k = 0;
+        while (k < inner.length) {
+            if (inner[k] === '\\') {
+                k++;
+                const esc = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '(': '(', ')': ')', '\\': '\\' };
+                if (esc[inner[k]] !== undefined) {
+                    s += esc[inner[k]];
+                    k++;
+                } else if (/[0-7]/.test(inner[k])) {
+                    let oct = inner[k++];
+                    if (/[0-7]/.test(inner[k])) oct += inner[k++];
+                    if (/[0-7]/.test(inner[k])) oct += inner[k++];
+                    s += String.fromCharCode(parseInt(oct, 8));
+                } else {
+                    s += inner[k++];
+                }
+            } else {
+                s += inner[k++];
+            }
+        }
+        return s.replace(/\0/g, '');
+    }
+    if (raw.startsWith('[') && raw.endsWith(']')) {
+        const inner = raw.slice(1, -1);
+        let s = '', k = 0;
+        while (k < inner.length) {
+            while (k < inner.length && /[\s]/.test(inner[k])) k++;
+            if (k >= inner.length) break;
+            if (inner[k] === '(') {
+                let d = 0, start = k;
+                while (k < inner.length) {
+                    if (inner[k] === '\\') { k += 2; continue; }
+                    if (inner[k] === '(') d++;
+                    if (inner[k] === ')') d--;
+                    k++;
+                    if (d === 0) break;
+                }
+                s += decodePdfToken(inner.slice(start, k));
+            } else if (inner[k] === '<') {
+                let start = k;
+                while (k < inner.length && inner[k] !== '>') k++;
+                k++;
+                s += decodePdfToken(inner.slice(start, k));
+            } else {
+                while (k < inner.length && !/[\s\[\]<>()\/%]/.test(inner[k])) k++;
+            }
+        }
+        return s;
+    }
+    return '';
+};
+
+const defaultWatermarkRegex = /vtugo|vtudeveloper|vtu|watermark|confidential|draft|sample|do not copy|studied smart|thanks to|copyright|preview|\.in|\.com/i;
+
+const isWatermarkMatch = (decodedText, targetKeywords = []) => {
+    if (!decodedText) return false;
+    const clean = decodedText.toLowerCase().trim();
+    if (!clean) return false;
+
+    if (defaultWatermarkRegex.test(clean)) return true;
+
+    const alphaOnly = clean.replace(/[^a-z0-9]/g, '');
+    if (alphaOnly && defaultWatermarkRegex.test(alphaOnly)) return true;
+
+    for (const target of targetKeywords) {
+        if (!target) continue;
+        const normTarget = target.toLowerCase().trim();
+        const normAlpha = normTarget.replace(/[^a-z0-9]/g, '');
+        if (clean.includes(normTarget) || normTarget.includes(clean)) return true;
+        if (normAlpha && (alphaOnly.includes(normAlpha) || normAlpha.includes(alphaOnly))) return true;
+    }
+
+    return false;
+};
+
+// Safe stream decompressor with multiple fallbacks
+const decompressStream = (stream) => {
+    try {
+        const decoded = decodePDFRawStream(stream).decode();
+        return new TextDecoder('latin1').decode(decoded);
+    } catch (e1) {
+        try {
+            const inflated = pako.inflate(stream.contents);
+            return new TextDecoder('latin1').decode(inflated);
+        } catch (e2) {
+            return new TextDecoder('latin1').decode(stream.contents);
         }
     }
-    return d[m][n];
 };
 
-const isFuzzyMatch = (s1, s2, threshold = 0.75) => {
-    if (!s1 || !s2) return false;
-    const l1 = s1.toLowerCase(), l2 = s2.toLowerCase();
-    if (l1.includes(l2) || l2.includes(l1)) return true;
-    const dist = levenshteinDistance(l1, l2);
-    const maxLen = Math.max(l1.length, l2.length);
-    return (1 - dist / maxLen) >= threshold;
+// Safe stream recompressor & updater
+const compressAndSetStream = (stream, newText, pdfDoc) => {
+    const enc = new TextEncoder().encode(newText);
+    const newStream = pdfDoc.context.flateStream(enc);
+    stream.contents = newStream.contents;
+    stream.dict.set(PDFName.of('Length'), PDFNumber.of(newStream.contents.length));
+    stream.dict.set(PDFName.of('Filter'), PDFName.of('FlateDecode'));
 };
-// --- END UTILS ---
 
+const getPreviousNumbers = (tokens, curIdx, count) => {
+    const nums = [];
+    let p = curIdx - 1;
+    while (p >= 0 && nums.length < count) {
+        if (tokens[p].type === 'tok' && !isNaN(parseFloat(tokens[p].raw))) {
+            nums.unshift(parseFloat(tokens[p].raw));
+        } else if (tokens[p].type !== 'ws') {
+            break;
+        }
+        p--;
+    }
+    return nums;
+};
+
+// --- MAIN COMPONENT ---
 
 const WatermarkRemoverTool = () => {
     const [file, setFile] = useState(null);
+    const [pdfDocProxy, setPdfDocProxy] = useState(null);
+    const [numPages, setNumPages] = useState(0);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [zoomScale, setZoomScale] = useState(1.1);
+
+    // States for progress and completion
     const [isScanning, setIsScanning] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [processProgress, setProcessProgress] = useState(0);
+    const [processStepText, setProcessStepText] = useState('');
     const [complete, setComplete] = useState(false);
     const [downloadUrl, setDownloadUrl] = useState(null);
-    
-    // Detected potential watermarks
+    const [cleanedPdfBytes, setCleanedPdfBytes] = useState(null);
+    const [cleanedPageProxy, setCleanedPageProxy] = useState(null);
+
+    // Interactive Preview Controls
+    const [toolMode, setToolMode] = useState('box'); // 'box' (drag to erase) or 'pan'
+    const [showCleanedPreview, setShowCleanedPreview] = useState(false);
+    const [customBoxes, setCustomBoxes] = useState([]); // [{id, page, x, y, w, h, applyToAll}] (normalized 0..1)
+    const [tempBox, setTempBox] = useState(null);
+    const [isDrawing, setIsDrawing] = useState(false);
+    const [startPos, setStartPos] = useState({ x: 0, y: 0 });
+
+    // Detection Data
     const [detectedObjects, setDetectedObjects] = useState([]); // {id, name, count, type}
+    const [detectedText, setDetectedText] = useState([]); // {text, count, confidence, isPositional, isAngled, fontName}
+    const [detectedTransparentGS, setDetectedTransparentGS] = useState([]); // names of ExtGStates with ca < 0.88
     const [hasAnnotations, setHasAnnotations] = useState(false);
+
+    // Removal Engine Selections & Settings
     const [selectedObjects, setSelectedObjects] = useState(new Set());
-    const [removeAnnots, setRemoveAnnots] = useState(false);
-    const [targetText, setTargetText] = useState('');
-    const [detectedText, setDetectedText] = useState([]); // {text, count, transform, fontName}
     const [selectedText, setSelectedText] = useState(new Set());
-    const [watermarkFonts, setWatermarkFonts] = useState(new Set()); // Internal font names like /F1
-    
-    // AI Specific State
-    const [isAiScanning, setIsAiScanning] = useState(false);
-    const [aiProgress, setAiProgress] = useState(0);
-    const [aiDetections, setAiDetections] = useState([]); // {text, bbox, page}
-    const [isUltraMode, setIsUltraMode] = useState(false); // If true, use OpenCV inpainting on rasterized pages
-    const [isNuclearMode, setIsNuclearMode] = useState(true); // If true, use aggressive font-based excision
+    const [targetText, setTargetText] = useState('');
+    const [watermarkFonts, setWatermarkFonts] = useState(new Set());
+
+    // Stubborn Watermark Filter Toggles (Dpdf parity)
+    const [removeAngledText, setRemoveAngledText] = useState(true);
+    const [removeTransparentLayers, setRemoveTransparentLayers] = useState(true);
+    const [removeMarkedContent, setRemoveMarkedContent] = useState(true);
+    const [removeAnnots, setRemoveAnnots] = useState(true);
+    const [isNuclearMode, setIsNuclearMode] = useState(true);
+    const [isUltraMode, setIsUltraMode] = useState(false); // OpenCV Inpainting for Scanned PDFs
     const [isCvLoaded, setIsCvLoaded] = useState(false);
 
+    // Refs
+    const canvasRef = useRef(null);
+    const canvasContainerRef = useRef(null);
+
     useEffect(() => {
-        // Check if OpenCV is loaded from script tag
         const checkCv = setInterval(() => {
             if (window.cv && window.cv.getBuildInformation) {
                 setIsCvLoaded(true);
@@ -85,531 +281,646 @@ const WatermarkRemoverTool = () => {
         return () => clearInterval(checkCv);
     }, []);
 
-    const onFileChange = (e) => {
+    const onFileChange = async (e) => {
         const selectedFile = e.target.files[0];
         if (selectedFile && selectedFile.type === 'application/pdf') {
             setFile(selectedFile);
             setComplete(false);
             setDownloadUrl(null);
+            setCleanedPdfBytes(null);
+            setCleanedPageProxy(null);
+            setShowCleanedPreview(false);
+            setCustomBoxes([]);
             setDetectedObjects([]);
-            setHasAnnotations(false);
             setDetectedText([]);
+            setDetectedTransparentGS([]);
+            setHasAnnotations(false);
             setSelectedObjects(new Set());
             setSelectedText(new Set());
-            setTargetText('');
-            setRemoveAnnots(false);
-            setAiDetections([]);
-            setAiProgress(0);
-            
-            // Auto-scan file
-            scanPDF(selectedFile);
+            setWatermarkFonts(new Set());
+            setCurrentPage(1);
+
+            try {
+                const arrayBuffer = await selectedFile.arrayBuffer();
+                const proxy = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                setPdfDocProxy(proxy);
+                setNumPages(proxy.numPages);
+                scanPDF(selectedFile, proxy);
+            } catch (err) {
+                console.error("Error opening PDF preview", err);
+                alert("Failed to load PDF preview. File might be password protected.");
+            }
         }
     };
 
-    const scanPDF = async (pdfFile) => {
+    // Deep Analysis of PDF (Streams, ExtGStates, XObjects, Text)
+    const scanPDF = async (pdfFile, proxy) => {
         setIsScanning(true);
         try {
             const arrayBuffer = await pdfFile.arrayBuffer();
             const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
             const pages = pdfDoc.getPages();
-            
-            const objectUsage = new Map(); // PDFRef -> {name, count, type}
+
+            const transparentGS = new Set();
+            const objectUsage = new Map();
             let totalAnnotations = 0;
-            const visitedRefs = new Set();
 
-            // Recursive XObject Scanner with Circular Protection
-            const scanResources = (resources) => {
-                if (!resources) return;
-                try {
-                    const resolvedRes = pdfDoc.context.lookup(resources);
-                    if (!resolvedRes || typeof resolvedRes.get !== 'function') return;
-
-                    const xObjectsObj = resolvedRes.get(PDFName.of('XObject'));
-                    if (!xObjectsObj) return;
-                    
-                    const xObjects = pdfDoc.context.lookup(xObjectsObj);
-                    if (!xObjects || typeof xObjects.entries !== 'function') return;
-
-                    for (const [name, ref] of xObjects.entries()) {
-                        const refStr = ref.toString();
-                        const nameStr = name instanceof PDFName ? name.decodeText() : 'Unknown';
-                        
-                        if (!objectUsage.has(refStr)) {
-                            objectUsage.set(refStr, { name: nameStr, count: 0, type: 'XObject' });
-                            
-                            // Deep scan if it's a Form XObject and not visited
-                            if (!visitedRefs.has(refStr)) {
-                                visitedRefs.add(refStr);
-                                try {
-                                    const xObj = pdfDoc.context.lookup(ref);
-                                    if (xObj instanceof PDFRawStream) {
-                                        const subtype = xObj.dict.get(PDFName.of('Subtype'));
-                                        if (subtype === PDFName.of('Form')) {
-                                            const nestedRes = xObj.dict.get(PDFName.of('Resources'));
-                                            if (nestedRes) scanResources(nestedRes);
-                                        }
-                                    }
-                                } catch (e) {}
-                            }
-                        }
-                        
-                        const data = objectUsage.get(refStr);
-                        if (data) data.count++;
-                    }
-                } catch (err) {
-                    console.warn("Resource scan skipped for one branch", err);
-                }
-            };
-
+            // 1. Inspect Resources: ExtGState transparency & XObjects
             for (let i = 0; i < pages.length; i++) {
                 const page = pages[i];
                 const annots = pdfDoc.context.lookup(page.node.get(PDFName.of('Annots')));
                 if (annots instanceof PDFArray) totalAnnotations += annots.size();
-                scanResources(page.node.get(PDFName.of('Resources')));
-            }
 
-            // --- SCAN TEXT (Diverse Sampling) ---
-            const textUsage = new Map(); // string -> {count, transforms: Set, fonts: Set}
-            try {
-                const pdfjsData = await pdfFile.arrayBuffer();
-                const pdfjsDoc = await pdfjsLib.getDocument({ data: pdfjsData }).promise;
-                
-                const numPages = pdfjsDoc.numPages;
-                const sampleIndices = new Set();
-                for (let i = 1; i <= Math.min(numPages, 10); i++) sampleIndices.add(i);
-                for (let i = Math.max(1, Math.floor(numPages/2)-2); i <= Math.min(numPages, Math.floor(numPages/2)+2); i++) sampleIndices.add(i);
-                for (let i = Math.max(1, numPages-5); i <= numPages; i++) sampleIndices.add(i);
+                const resRef = page.node.get(PDFName.of('Resources'));
+                if (!resRef) continue;
+                const res = pdfDoc.context.lookup(resRef);
+                if (!res || typeof res.get !== 'function') continue;
 
-                for (const i of sampleIndices) {
-                    const page = await pdfjsDoc.getPage(i);
-                    const content = await page.getTextContent();
-                    const pageStrings = new Set();
-                    
-                    for (const item of content.items) {
-                        const s = item.str.trim();
-                        if (s.length > 3) {
-                            const transform = item.transform.map(n => Math.round(n)).join('_');
-                            const fontKey = item.fontName;
-                            pageStrings.add(`${s}|@|${transform}|@|${fontKey}`);
+                // Transparent ExtGState scanner
+                const egRef = res.get(PDFName.of('ExtGState'));
+                if (egRef) {
+                    const egDict = pdfDoc.context.lookup(egRef);
+                    if (egDict && typeof egDict.entries === 'function') {
+                        for (const [k, v] of egDict.entries()) {
+                            const dict = pdfDoc.context.lookup(v);
+                            if (dict && typeof dict.get === 'function') {
+                                const ca = dict.get(PDFName.of('ca'));
+                                const CA = dict.get(PDFName.of('CA'));
+                                const caVal = ca instanceof PDFNumber ? ca.asNumber() : null;
+                                const CAVal = CA instanceof PDFNumber ? CA.asNumber() : null;
+                                if ((caVal !== null && caVal < 0.88) || (CAVal !== null && CAVal < 0.88)) {
+                                    const nameStr = k instanceof PDFName ? k.decodeText() : k.toString();
+                                    transparentGS.add(nameStr);
+                                }
+                            }
                         }
                     }
-                    for (const s of pageStrings) {
-                        const [text, transform, fontKey] = s.split('|@|');
-                        if (!textUsage.has(text)) textUsage.set(text, { count: 0, transforms: new Set(), fonts: new Set() });
-                        const entry = textUsage.get(text);
-                        entry.count++;
-                        entry.transforms.add(transform);
-                        entry.fonts.add(fontKey);
+                }
+
+                // XObject scanner
+                const xobjRef = res.get(PDFName.of('XObject'));
+                if (xobjRef) {
+                    const xobjDict = pdfDoc.context.lookup(xobjRef);
+                    if (xobjDict && typeof xobjDict.entries === 'function') {
+                        for (const [name, ref] of xobjDict.entries()) {
+                            const refStr = ref.toString();
+                            const nameStr = name instanceof PDFName ? name.decodeText() : name.toString();
+                            if (!objectUsage.has(refStr)) {
+                                objectUsage.set(refStr, { name: nameStr, count: 0, type: 'XObject' });
+                            }
+                            objectUsage.get(refStr).count++;
+                        }
                     }
                 }
-            } catch (err) {
-                console.error("Text scan error", err);
             }
 
-            const actualSampleCount = new Set([
-              ...Array.from({length: Math.min(pages.length, 10)}, (_, i) => i + 1),
-              ...Array.from({length: 5}, (_, i) => Math.max(1, Math.floor(pages.length/2)-2) + i).filter(i => i <= pages.length),
-              ...Array.from({length: 6}, (_, i) => Math.max(1, pages.length-5) + i).filter(i => i <= pages.length)
-            ]).size;
+            setDetectedTransparentGS(Array.from(transparentGS));
+
+            // 2. Sample PDF text with PDF.js
+            const textUsage = new Map();
+            const totalSamplePages = Math.min(proxy.numPages, 12);
+            const samplePages = new Set();
+            for (let i = 1; i <= Math.min(proxy.numPages, 5); i++) samplePages.add(i);
+            for (let i = Math.max(1, Math.floor(proxy.numPages / 2) - 2); i <= Math.min(proxy.numPages, Math.floor(proxy.numPages / 2) + 2); i++) samplePages.add(i);
+            for (let i = Math.max(1, proxy.numPages - 3); i <= proxy.numPages; i++) samplePages.add(i);
+
+            for (const pNum of samplePages) {
+                try {
+                    const page = await proxy.getPage(pNum);
+                    const content = await page.getTextContent();
+                    const pageStrings = new Set();
+
+                    for (const item of content.items) {
+                        const s = item.str.trim();
+                        if (s.length >= 3) {
+                            const isRotated = Math.abs(item.transform[1]) > 0.08 || Math.abs(item.transform[2]) > 0.08;
+                            const fontKey = item.fontName || 'F';
+                            pageStrings.add(`${s}|@|${isRotated ? 'angled' : 'straight'}|@|${fontKey}`);
+                        }
+                    }
+
+                    for (const entry of pageStrings) {
+                        const [text, angleStatus, fontKey] = entry.split('|@|');
+                        if (!textUsage.has(text)) {
+                            textUsage.set(text, { count: 0, isAngled: angleStatus === 'angled', fonts: new Set() });
+                        }
+                        const rec = textUsage.get(text);
+                        rec.count++;
+                        if (angleStatus === 'angled') rec.isAngled = true;
+                        rec.fonts.add(fontKey);
+                    }
+                } catch (e) {
+                    console.warn("Text sampling error on page", pNum, e);
+                }
+            }
 
             const potentialTextWatermarks = Array.from(textUsage.entries())
-                .filter(([_, data]) => data.count > 1)
-                .map(([text, data]) => ({ 
-                    text, 
-                    count: data.count, 
-                    confidence: data.count / actualSampleCount,
-                    isPositional: data.transforms.size === 1,
-                    fontName: Array.from(data.fonts)[0] // Take first font used for this recurring text
+                .filter(([text, data]) => data.count > 1 || isWatermarkMatch(text) || data.isAngled)
+                .map(([text, data]) => ({
+                    text,
+                    count: data.count,
+                    confidence: data.count / samplePages.size,
+                    isAngled: data.isAngled,
+                    fontName: Array.from(data.fonts)[0]
                 }))
                 .sort((a, b) => b.count - a.count);
-            
+
             setDetectedText(potentialTextWatermarks);
 
-            const potentialWatermarks = Array.from(objectUsage.entries())
-                .filter(([_, data]) => data.count > 1 || (pages.length === 1 && data.count === 1))
+            const potentialObjects = Array.from(objectUsage.entries())
+                .filter(([_, data]) => data.count > 1 || (pages.length === 1 && data.count === 1) || /wm|watermark|draft|stamp/i.test(data.name))
                 .map(([ref, data]) => ({
                     id: ref,
                     name: data.name,
                     count: data.count,
-                    type: 'XObject'
+                    type: data.type
                 }));
 
-            setDetectedObjects(potentialWatermarks);
-            
+            setDetectedObjects(potentialObjects);
+            setHasAnnotations(totalAnnotations > 0);
+
+            // Auto-select highly likely watermarks
             const autoSelectedObj = new Set();
-            const autoSelectedText = new Set();
+            const autoSelectedTxt = new Set();
             const autoFonts = new Set();
-            
-            potentialWatermarks.forEach(obj => {
-                if (obj.count / pages.length > 0.8) autoSelectedObj.add(obj.id);
+
+            potentialObjects.forEach(obj => {
+                if (obj.count / pages.length > 0.6 || /wm|watermark|bg|draft|copy/i.test(obj.name)) {
+                    autoSelectedObj.add(obj.id);
+                }
             });
-            potentialTextWatermarks.forEach(txt => {
-                if (txt.confidence > 0.8) {
-                    autoSelectedText.add(txt.text);
-                    // Extract internal font name (e.g. from g_d0_f1 take f1)
-                    if (txt.fontName) {
-                        const internalName = txt.fontName.split('_').pop();
-                        // Internal names usually look like F1, F2...
-                        // If it's something like f1, normalize to F1 for matching
+
+            potentialTextWatermarks.forEach(t => {
+                if (t.confidence > 0.5 || isWatermarkMatch(t.text) || t.isAngled) {
+                    autoSelectedTxt.add(t.text);
+                    if (t.fontName) {
+                        const internalName = t.fontName.split('_').pop();
                         autoFonts.add(internalName.toUpperCase());
                     }
                 }
             });
-            
+
             setSelectedObjects(autoSelectedObj);
-            setSelectedText(autoSelectedText);
+            setSelectedText(autoSelectedTxt);
             setWatermarkFonts(autoFonts);
-            setSelectedText(autoSelectedText);
-            setHasAnnotations(totalAnnotations > 0);
-            if (totalAnnotations > 0) setRemoveAnnots(true);
 
         } catch (err) {
-            console.error("Scan error", err);
-            alert("Analysis failed. This PDF might be heavily protected.");
+            console.error("Deep Scan error", err);
         } finally {
             setIsScanning(false);
         }
     };
 
+    // Render Preview on Canvas
+    useEffect(() => {
+        let isCancelled = false;
+        const renderPage = async () => {
+            const proxy = showCleanedPreview && cleanedPageProxy ? cleanedPageProxy : pdfDocProxy;
+            if (!proxy || !canvasRef.current) return;
 
+            try {
+                const page = await proxy.getPage(showCleanedPreview && cleanedPageProxy ? 1 : currentPage);
+                const viewport = page.getViewport({ scale: zoomScale });
+                const canvas = canvasRef.current;
+                const context = canvas.getContext('2d');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
 
-    const toggleObjectSelection = (id) => {
-        const next = new Set(selectedObjects);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        setSelectedObjects(next);
+                const renderContext = {
+                    canvasContext: context,
+                    viewport: viewport
+                };
+
+                await page.render(renderContext).promise;
+            } catch (err) {
+                if (!isCancelled) console.error("Canvas render error", err);
+            }
+        };
+
+        renderPage();
+        return () => { isCancelled = true; };
+    }, [pdfDocProxy, cleanedPageProxy, currentPage, zoomScale, showCleanedPreview]);
+
+    // Fast Single-Page Clean for Instant "Before & After" Preview
+    const generateCleanedPreview = async () => {
+        if (!file || !pdfDocProxy) return;
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+            
+            // Extract single current page for fast preview
+            const singlePageDoc = await PDFDocument.create();
+            const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [currentPage - 1]);
+            singlePageDoc.addPage(copiedPage);
+
+            // Execute clean on this single page doc
+            await executeWatermarkRemovalOnDoc(singlePageDoc, true);
+
+            const previewBytes = await singlePageDoc.save();
+            const previewProxy = await pdfjsLib.getDocument({ data: previewBytes }).promise;
+            setCleanedPageProxy(previewProxy);
+            setShowCleanedPreview(true);
+        } catch (err) {
+            console.error("Error generating cleaned preview:", err);
+            alert("Could not generate instant preview. You can still proceed to Remove & Download.");
+        }
     };
 
+    // Core Multi-Engine Watermark Cleaner (Shared between Preview and Full Download)
+    const executeWatermarkRemovalOnDoc = async (pdfDoc, isSinglePreview = false) => {
+        const pages = pdfDoc.getPages();
+
+        // 1. Gather all transparent ExtGStates
+        const transparentGS = new Set(detectedTransparentGS);
+        for (const page of pages) {
+            const resRef = page.node.get(PDFName.of('Resources'));
+            if (!resRef) continue;
+            const res = pdfDoc.context.lookup(resRef);
+            if (!res || typeof res.get !== 'function') continue;
+            const egRef = res.get(PDFName.of('ExtGState'));
+            if (!egRef) continue;
+            const egDict = pdfDoc.context.lookup(egRef);
+            if (!egDict || typeof egDict.entries !== 'function') continue;
+            for (const [k, v] of egDict.entries()) {
+                const dict = pdfDoc.context.lookup(v);
+                if (dict && typeof dict.get === 'function') {
+                    const ca = dict.get(PDFName.of('ca'));
+                    const CA = dict.get(PDFName.of('CA'));
+                    const caVal = ca instanceof PDFNumber ? ca.asNumber() : null;
+                    const CAVal = CA instanceof PDFNumber ? CA.asNumber() : null;
+                    if ((caVal !== null && caVal < 0.88) || (CAVal !== null && CAVal < 0.88)) {
+                        const nameStr = k instanceof PDFName ? k.decodeText() : k.toString();
+                        transparentGS.add(nameStr);
+                    }
+                }
+            }
+        }
+
+        // 2. Identify XObjects to remove
+        const xDoNamesToRemove = new Set();
+        for (const page of pages) {
+            const resRef = page.node.get(PDFName.of('Resources'));
+            if (!resRef) continue;
+            const res = pdfDoc.context.lookup(resRef);
+            if (!res || typeof res.get !== 'function') continue;
+            const xobjRef = res.get(PDFName.of('XObject'));
+            if (!xobjRef) continue;
+            const xobjDict = pdfDoc.context.lookup(xobjRef);
+            if (!xobjDict || typeof xobjDict.entries !== 'function') continue;
+
+            const toDelete = [];
+            for (const [name, ref] of xobjDict.entries()) {
+                const refStr = ref.toString();
+                const nameStr = name instanceof PDFName ? name.decodeText() : name.toString();
+                if (selectedObjects.has(refStr) || selectedObjects.has(nameStr) || /wm|watermark|draft|copy|stamp/i.test(nameStr)) {
+                    xDoNamesToRemove.add(nameStr);
+                    toDelete.push(name);
+                }
+            }
+            for (const name of toDelete) xobjDict.delete(name);
+        }
+
+        // 3. Remove Metadata & Annotations
+        const catalog = pdfDoc.catalog;
+        if (catalog.has(PDFName.of('OCProperties'))) catalog.delete(PDFName.of('OCProperties'));
+        if (catalog.has(PDFName.of('PieceInfo'))) catalog.delete(PDFName.of('PieceInfo'));
+
+        if (removeAnnots) {
+            for (const page of pages) page.node.delete(PDFName.of('Annots'));
+        }
+
+        // 4. Target texts
+        const targetKeywords = Array.from(selectedText);
+        if (targetText.trim()) targetKeywords.push(targetText.trim());
+
+        // Process a raw stream
+        const processStream = (stream, pageIndex, pageWidth, pageHeight) => {
+            try {
+                const rawContent = decompressStream(stream);
+                const tokens = tokenizeStream(rawContent);
+                let modified = false;
+
+                const stateStack = [];
+                let curState = {
+                    isTransparent: false,
+                    isAngled: false,
+                    inText: false,
+                    inMarkedWatermark: false,
+                    font: null,
+                    matrix: [1, 0, 0, 1, 0, 0],
+                    textMatrix: [1, 0, 0, 1, 0, 0]
+                };
+
+                // Relevant user-drawn bounding boxes for this page
+                const relevantBoxes = customBoxes.filter(b => b.applyToAll || b.page === (pageIndex + 1));
+
+                for (let idx = 0; idx < tokens.length; idx++) {
+                    const t = tokens[idx];
+                    if (t.type === 'tok') {
+                        if (t.raw === 'q') {
+                            stateStack.push({ ...curState });
+                        } else if (t.raw === 'Q') {
+                            if (stateStack.length > 0) curState = stateStack.pop();
+                        } else if (t.raw === 'gs') {
+                            let p = idx - 1;
+                            while (p >= 0 && tokens[p].type === 'ws') p--;
+                            if (p >= 0 && (tokens[p].type === 'name' || tokens[p].raw.startsWith('/'))) {
+                                const gsName = tokens[p].raw.replace(/^\//, '');
+                                if (transparentGS.has(gsName)) {
+                                    curState.isTransparent = true;
+                                }
+                            }
+                        } else if (t.raw === 'cm') {
+                            const nums = getPreviousNumbers(tokens, idx, 6);
+                            if (nums.length === 6) {
+                                curState.matrix = nums;
+                                const b = nums[1], c = nums[2];
+                                if (Math.abs(b) > 0.08 || Math.abs(c) > 0.08) {
+                                    curState.isAngled = true;
+                                }
+                            }
+                        } else if (t.raw === 'BT') {
+                            curState.inText = true;
+                            curState.textMatrix = [1, 0, 0, 1, 0, 0];
+                        } else if (t.raw === 'ET') {
+                            curState.inText = false;
+                        } else if (t.raw === 'Tf') {
+                            let p = idx - 1;
+                            while (p >= 0 && (tokens[p].type === 'ws' || !isNaN(tokens[p].raw))) p--;
+                            if (p >= 0 && tokens[p].raw.startsWith('/')) {
+                                curState.font = tokens[p].raw.replace(/^\//, '');
+                            }
+                        } else if (t.raw === 'Tm') {
+                            const nums = getPreviousNumbers(tokens, idx, 6);
+                            if (nums.length === 6) {
+                                curState.textMatrix = nums;
+                                const b = nums[1], c = nums[2];
+                                if (Math.abs(b) > 0.08 || Math.abs(c) > 0.08) {
+                                    curState.isAngled = true;
+                                }
+                            }
+                        } else if (t.raw === 'BDC' || t.raw === 'BMC') {
+                            let p = idx - 1;
+                            while (p >= 0 && tokens[p].type === 'ws') p--;
+                            if (p >= 0 && /^\/(Watermark|Artifact)/i.test(tokens[p].raw)) {
+                                curState.inMarkedWatermark = true;
+                            }
+                        } else if (t.raw === 'EMC') {
+                            curState.inMarkedWatermark = false;
+                        } else if (t.raw === 'Do') {
+                            let p = idx - 1;
+                            while (p >= 0 && tokens[p].type === 'ws') p--;
+                            if (p >= 0 && (tokens[p].type === 'name' || tokens[p].raw.startsWith('/'))) {
+                                const xName = tokens[p].raw.replace(/^\//, '');
+                                if (xDoNamesToRemove.has(xName) ||
+                                    (removeTransparentLayers && curState.isTransparent) ||
+                                    (removeAngledText && curState.isAngled) ||
+                                    (removeMarkedContent && curState.inMarkedWatermark)) {
+                                    tokens[p].raw = '';
+                                    tokens[idx].raw = '';
+                                    modified = true;
+                                }
+                            }
+                        } else if (['Tj', 'TJ', "'", '"'].includes(t.raw)) {
+                            let isTarget = false;
+
+                            // Condition 1: Transparent layer
+                            if (removeTransparentLayers && curState.isTransparent) isTarget = true;
+
+                            // Condition 2: Rotated/angled watermark text
+                            if (removeAngledText && curState.isAngled) isTarget = true;
+
+                            // Condition 3: Marked content watermark
+                            if (removeMarkedContent && curState.inMarkedWatermark) isTarget = true;
+
+                            // Condition 4: Known watermark font
+                            if (isNuclearMode && curState.font && watermarkFonts.has(curState.font.toUpperCase())) isTarget = true;
+
+                            // Condition 5: Text string match
+                            let p = idx - 1;
+                            while (p >= 0 && tokens[p].type === 'ws') p--;
+                            if (p >= 0) {
+                                const decoded = decodePdfToken(tokens[p].raw);
+                                if (isWatermarkMatch(decoded, targetKeywords)) isTarget = true;
+                            }
+
+                            // Condition 6: Falls inside user-drawn box
+                            if (relevantBoxes.length > 0 && pageWidth && pageHeight) {
+                                const tx = curState.textMatrix[4] || curState.matrix[4] || 0;
+                                const ty = curState.textMatrix[5] || curState.matrix[5] || 0;
+                                for (const box of relevantBoxes) {
+                                    const bX0 = box.x * pageWidth;
+                                    const bX1 = (box.x + box.w) * pageWidth;
+                                    const bY0 = pageHeight - (box.y + box.h) * pageHeight;
+                                    const bY1 = pageHeight - box.y * pageHeight;
+                                    if (tx >= bX0 && tx <= bX1 && ty >= bY0 && ty <= bY1) {
+                                        isTarget = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (isTarget) {
+                                if (p >= 0 && (tokens[p].type === 'str' || tokens[p].type === 'hex' || tokens[p].type === 'arr_open' || tokens[p].raw.endsWith(']'))) {
+                                    tokens[p].raw = t.raw === 'TJ' ? '[]' : '()';
+                                    modified = true;
+                                }
+                            }
+                        } else if (['f', 'F', 'f*', 'S', 's', 'B', 'B*', 'b', 'b*'].includes(t.raw)) {
+                            // Turn off vector path painting for watermarks
+                            if ((removeTransparentLayers && curState.isTransparent) ||
+                                (removeAngledText && curState.isAngled) ||
+                                (removeMarkedContent && curState.inMarkedWatermark)) {
+                                t.raw = 'n'; // Ends path without painting
+                                modified = true;
+                            }
+                        }
+                    }
+                }
+
+                if (modified) {
+                    compressAndSetStream(stream, tokens.map(tk => tk.raw).join(''), pdfDoc);
+                }
+            } catch (err) {
+                console.warn("Stream scrub issue", err);
+            }
+        };
+
+        // 5. Scrub all Page Content Streams
+        for (let pIdx = 0; pIdx < pages.length; pIdx++) {
+            const page = pages[pIdx];
+            const { width, height } = page.getSize();
+            const contentsRef = page.node.get(PDFName.of('Contents'));
+            if (!contentsRef) continue;
+
+            const resolvedContents = pdfDoc.context.lookup(contentsRef);
+            const streamRefs = resolvedContents instanceof PDFArray ? resolvedContents.asArray() : [contentsRef];
+
+            for (const sRef of streamRefs) {
+                const stream = pdfDoc.context.lookup(sRef);
+                if (stream instanceof PDFRawStream) {
+                    processStream(stream, pIdx, width, height);
+                }
+            }
+        }
+
+        // 6. Scrub all Form XObjects
+        for (const [, obj] of pdfDoc.context.enumerateIndirectObjects()) {
+            if (obj instanceof PDFRawStream && obj.dict.get(PDFName.of('Subtype')) === PDFName.of('Form')) {
+                processStream(obj, 0, 1000, 1000);
+            }
+        }
+    };
+
+    // Full Execution (Remove & Download)
     const removeWatermarks = async () => {
         if (!file) return;
         setIsProcessing(true);
+        setProcessProgress(15);
+        setProcessStepText('Scanning PDF structure and graphics layers...');
 
         try {
             const arrayBuffer = await file.arrayBuffer();
             const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-            const pages = pdfDoc.getPages();
 
-            // 1. Structural Cleaning
-            const catalog = pdfDoc.catalog;
-            if (catalog.has(PDFName.of('OCProperties'))) catalog.delete(PDFName.of('OCProperties'));
-            if (catalog.has(PDFName.of('PieceInfo'))) catalog.delete(PDFName.of('PieceInfo'));
+            setProcessProgress(40);
+            setProcessStepText('Excising watermark objects, transparent states & text...');
 
-            // 2. Annotations
-            if (removeAnnots) {
-                for (const page of pages) page.node.delete(PDFName.of('Annots'));
-            }
+            await executeWatermarkRemovalOnDoc(pdfDoc, false);
 
-            // 3. Process Chosen XObjects — delete from resources + collect names for Do-removal
-            const xDoNamesToRemove = new Set(); // XObject /names whose Do calls must be stripped
-            if (selectedObjects.size > 0) {
-                const targetRefs = new Set(Array.from(selectedObjects));
-                for (const page of pages) {
-                    try {
-                        const resRef = page.node.get(PDFName.of('Resources'));
-                        if (!resRef) continue;
-                        const res = pdfDoc.context.lookup(resRef);
-                        if (!res || typeof res.get !== 'function') continue;
-                        const xobjRef = res.get(PDFName.of('XObject'));
-                        if (!xobjRef) continue;
-                        const xobjDict = pdfDoc.context.lookup(xobjRef);
-                        if (!xobjDict || typeof xobjDict.entries !== 'function') continue;
-                        const toDelete = [];
-                        for (const [name, ref] of xobjDict.entries()) {
-                            if (targetRefs.has(ref.toString())) {
-                                const nameStr = name instanceof PDFName ? name.decodeText() : name.toString();
-                                xDoNamesToRemove.add(nameStr);
-                                toDelete.push(name);
-                            }
-                        }
-                        for (const name of toDelete) xobjDict.delete(name);
-                    } catch(e) {}
-                }
-            }
-
-            // 4. TRUE TEXT ERASURE — PDF Content Stream Operator Parser
-            const finalTargetTextList = Array.from(selectedText);
-            if (targetText.trim()) finalTargetTextList.push(targetText.trim());
-
-            if (finalTargetTextList.length > 0) {
-                const normalizedTargets = finalTargetTextList.map(t => t.toLowerCase().trim()).filter(Boolean);
-
-                // Inflate a Uint8Array using DecompressionStream
-                const inflate = async (data) => {
-                    for (const fmt of ['deflate', 'deflate-raw']) {
-                        try {
-                            let d = data;
-                            if (fmt === 'deflate-raw' && data[0] === 0x78) d = data.slice(2, -4);
-                            const ds = new DecompressionStream(fmt);
-                            const w = ds.writable.getWriter(); w.write(d); w.close();
-                            const r = ds.readable.getReader();
-                            const chunks = []; while(true){const{done,value}=await r.read();if(done)break;chunks.push(value);}
-                            const len = chunks.reduce((a,c)=>a+c.length,0);
-                            const out = new Uint8Array(len); let off=0;
-                            for(const c of chunks){out.set(c,off);off+=c.length;}
-                            return out;
-                        } catch(e) {}
-                    }
-                    return data;
-                };
-
-                // Deflate a Uint8Array
-                const deflate = async (data) => {
-                    const cs = new CompressionStream('deflate');
-                    const w = cs.writable.getWriter(); w.write(data); w.close();
-                    const r = cs.readable.getReader();
-                    const chunks = []; while(true){const{done,value}=await r.read();if(done)break;chunks.push(value);}
-                    const len = chunks.reduce((a,c)=>a+c.length,0);
-                    const out = new Uint8Array(len); let off=0;
-                    for(const c of chunks){out.set(c,off);off+=c.length;}
-                    return out;
-                };
-
-                // Decode a PDF string token to a plain JS string
-                const decodePdfStr = (raw) => {
-                    if (raw.startsWith('<') && raw.endsWith('>')) {
-                        const hex = raw.slice(1,-1).replace(/\s/g,'');
-                        let s=''; for(let k=0;k<hex.length;k+=2) s+=String.fromCharCode(parseInt(hex.substr(k,2)||'0',16));
-                        return s;
-                    }
-                    if (raw.startsWith('(') && raw.endsWith(')')) {
-                        const inner = raw.slice(1,-1); let s='',k=0;
-                        while(k<inner.length){
-                            if(inner[k]==='\\'){k++;const m={n:'\n',r:'\r',t:'\t','(':'(', ')':')', '\\':'\\'};
-                                if(m[inner[k]]!==undefined){s+=m[inner[k]];k++;}
-                                else if(/[0-7]/.test(inner[k])){let o=inner[k++];if(/[0-7]/.test(inner[k]))o+=inner[k++];if(/[0-7]/.test(inner[k]))o+=inner[k++];s+=String.fromCharCode(parseInt(o,8));}
-                                else s+=inner[k++];
-                            } else s+=inner[k++];
-                        }
-                        return s;
-                    }
-                    return '';
-                };
-
-                // Extract combined text from a TJ array like [(abc) 5 (def)]
-                const decodeTJArray = (raw) => {
-                    const inner = raw.slice(1,-1); let s='',k=0;
-                    while(k<inner.length){
-                        while(k<inner.length&&/[\s]/.test(inner[k]))k++;
-                        if(k>=inner.length)break;
-                        if(inner[k]==='('){let d=0,start=k;while(k<inner.length){if(inner[k]==='\\'){k+=2;continue;}if(inner[k]==='(')d++;if(inner[k]===')')d--;k++;if(d===0)break;}s+=decodePdfStr(inner.slice(start,k));}
-                        else if(inner[k]==='<'){let start=k;while(k<inner.length&&inner[k]!=='>')k++;k++;s+=decodePdfStr(inner.slice(start,k));}
-                        else{while(k<inner.length&&!/[\s\[\]<>()\/%]/.test(inner[k]))k++;}
-                    }
-                    return s;
-                };
-
-                const matchesAny = (decoded) => {
-                    const low = decoded.toLowerCase().trim();
-                    if (!low || low.length < 3) return false;
-                    
-                    if (normalizedTargets.some(t => low.includes(t) || t.includes(low))) return true;
-                    
-                    // Nuclear Fuzzy Match
-                    if (isNuclearMode) {
-                        return normalizedTargets.some(t => isFuzzyMatch(low, t, 0.8));
-                    }
-                    return false;
-                };
-
-                // Read a single PDF token from content string starting at pos
-                const readToken = (s, pos) => {
-                    while(pos<s.length && /[\x00\t\n\x0c\r ]/.test(s[pos])) pos++;
-                    if(pos>=s.length) return null;
-                    const ch = s[pos];
-                    if(ch==='%'){let e=pos;while(e<s.length&&s[e]!=='\n'&&s[e]!=='\r')e++;return{raw:s.slice(pos,e),end:e,type:'other'};}
-                    if(ch==='('){let d=0,j=pos;while(j<s.length){if(s[j]==='\\'){j+=2;continue;}if(s[j]==='(')d++;if(s[j]===')')d--;j++;if(d===0)break;}return{raw:s.slice(pos,j),end:j,type:'str'};}
-                    if(ch==='<'&&s[pos+1]!=='<'){let j=pos+1;while(j<s.length&&s[j]!=='>')j++;j++;return{raw:s.slice(pos,j),end:j,type:'str'};}
-                    if(ch==='['){ let d=0,j=pos;while(j<s.length){if(s[j]==='\\'){j+=2;continue;}if(s[j]==='('){let d2=0;while(j<s.length){if(s[j]==='\\'){j+=2;continue;}if(s[j]==='(')d2++;if(s[j]===')')d2--;j++;if(d2===0)break;}continue;}if(s[j]==='<'&&s[j+1]!=='<'){while(j<s.length&&s[j]!=='>')j++;j++;continue;}if(s[j]==='[')d++;if(s[j]===']')d--;j++;if(d===0)break;}return{raw:s.slice(pos,j),end:j,type:'arr'};}
-                    if(ch==='<'&&s[pos+1]==='<'){let d=0,j=pos;while(j<s.length){if(s[j]==='<'&&s[j+1]==='<'){d++;j+=2;}else if(s[j]==='>'&&s[j+1]==='>'){d--;j+=2;}else j++;if(d===0)break;}return{raw:s.slice(pos,j),end:j,type:'other'};}
-                    let j=pos;while(j<s.length&&!/[\x00\t\n\x0c\r ()\[\]{}<>\/%]/.test(s[j]))j++;
-                    if(j===pos) j++; // always advance to prevent infinite loop on unmatched delimiters
-                    return{raw:s.slice(pos,j),end:j,type:'tok'};
-                };
-
-                // Scrub a decompressed content stream string
-                const scrubContent = (content) => {
-                    const tokens = []; let pos=0;
-                    while(pos<content.length){
-                        while(pos<content.length&&/[\x00\t\n\x0c\r ]/.test(content[pos])){tokens.push({raw:content[pos],type:'ws'});pos++;}
-                        if(pos>=content.length)break;
-                        const tok = readToken(content,pos);
-                        if(!tok)break;
-                        if(tok.end <= pos){ pos++; continue; } // safety: always advance
-                        tokens.push(tok); pos=tok.end;
-                    }
-                    let modified = false;
-                    let currentFontRef = null;
-
-                    for(let i=0;i<tokens.length;i++){
-                        const t = tokens[i];
-                        if(t.type!=='tok') continue;
-
-                        // Track Font Switch (e.g. /F1 12 Tf)
-                        if (t.raw === 'Tf') {
-                            let pi = i - 1;
-                            while (pi >= 0 && (tokens[pi].type === 'ws' || !isNaN(tokens[pi].raw))) pi--;
-                            if (pi >= 0 && tokens[pi].raw.startsWith('/')) {
-                                currentFontRef = tokens[pi].raw.slice(1);
-                            }
-                        }
-
-                        // NUCLEAR OPTION: If current font is a watermark font, strip ALL text operators
-                        if (isNuclearMode && currentFontRef && watermarkFonts.has(currentFontRef)) {
-                            if (['Tj', 'TJ', "'", '"'].includes(t.raw)) {
-                                let pi = i - 1; while (pi >= 0 && tokens[pi].type === 'ws') pi--;
-                                if (pi >= 0 && (tokens[pi].type === 'str' || tokens[pi].type === 'arr')) {
-                                    tokens[pi].raw = t.raw === 'TJ' ? '[]' : '()';
-                                    modified = true;
-                                }
-                            }
-                        }
-
-                        // Strip Do calls for deleted XObjects
-                        if(t.raw==='Do'){
-                            let pi=i-1; while(pi>=0&&tokens[pi].type==='ws')pi--;
-                            if(pi>=0&&tokens[pi].type==='tok'&&tokens[pi].raw.startsWith('/')){
-                                const xName = tokens[pi].raw.slice(1);
-                                if(xDoNamesToRemove.has(xName)){tokens[pi].raw='';t.raw='';modified=true;}
-                            }
-                        } else if(t.raw==='Tj'||t.raw==="'"){
-                            let pi=i-1; while(pi>=0&&tokens[pi].type==='ws')pi--;
-                            if(pi>=0&&tokens[pi].type==='str'){
-                                if(matchesAny(decodePdfStr(tokens[pi].raw))){tokens[pi].raw='()';modified=true;}
-                            }
-                        } else if(t.raw==='TJ'){
-                            let pi=i-1; while(pi>=0&&tokens[pi].type==='ws')pi--;
-                            if(pi>=0&&tokens[pi].type==='arr'){
-                                if(matchesAny(decodeTJArray(tokens[pi].raw))){tokens[pi].raw='[]';modified=true;}
-                            }
-                        } else if(t.raw==='"'){
-                            let pi=i-1; while(pi>=0&&tokens[pi].type==='ws')pi--;
-                            if(pi>=0&&tokens[pi].type==='str'){
-                                if(matchesAny(decodePdfStr(tokens[pi].raw))){tokens[pi].raw='()';modified=true;}
-                            }
-                        }
-                    }
-                    return { result: tokens.map(t=>t.raw).join(''), modified };
-                };
-
-                // Process a single PDFRawStream
-                const processStream = async (stream) => {
-                    try {
-                        const filter = stream.dict.get(PDFName.of('Filter'));
-                        const isFlate = filter === PDFName.of('FlateDecode');
-                        const raw = stream.contents;
-                        const bytes = isFlate ? await inflate(raw) : raw;
-                        const text = new TextDecoder('latin1').decode(bytes);
-                        const { result, modified } = scrubContent(text);
-                        if (modified) {
-                            const enc = new TextEncoder().encode(result);
-                            if (isFlate) {
-                                const compressed = await deflate(enc);
-                                stream.setContents(compressed);
-                            } else {
-                                stream.setContents(enc);
-                                stream.dict.delete(PDFName.of('Filter'));
-                            }
-                        }
-                    } catch(e) { console.warn('stream scrub failed', e); }
-                };
-
-                // Process all page content streams + form XObjects
-                for (const page of pages) {
-                    const contents = page.node.get(PDFName.of('Contents'));
-                    if (contents) {
-                        const resolved = pdfDoc.context.lookup(contents);
-                        const streams = resolved instanceof PDFArray ? resolved.asArray() : [resolved];
-                        for (const s of streams) if (s instanceof PDFRawStream) await processStream(s);
-                    }
-                }
-                for (const [, obj] of pdfDoc.context.enumerateIndirectObjects()) {
-                    if (obj instanceof PDFRawStream && obj.dict.get(PDFName.of('Subtype')) === PDFName.of('Form')) {
-                        await processStream(obj);
-                    }
-                }
-            }
+            setProcessProgress(75);
+            setProcessStepText('Reconstructing clean vector document...');
 
             let finalPdfBytes;
-            
-            // 4. Ultra Mode: AI Inpainting (Layer 3)
-            if (isUltraMode && isCvLoaded) {
-                const finalPdfDoc = await PDFDocument.create();
-                const tempPdfBytes = await pdfDoc.save();
-                const pdfjsDoc = await pdfjsLib.getDocument({ data: tempPdfBytes }).promise;
 
-                for (let i = 1; i <= pdfjsDoc.numPages; i++) {
-                    const page = await pdfjsDoc.getPage(i);
+            // Optional Ultra Mode (OpenCV / AI Inpainting on Scanned Pages)
+            if (isUltraMode && (isCvLoaded || customBoxes.length > 0)) {
+                setProcessStepText('Applying Deep AI inpainting to pixels...');
+                const inpaintPdfDoc = await PDFDocument.create();
+                const tempBytes = await pdfDoc.save();
+                const tempProxy = await pdfjsLib.getDocument({ data: tempBytes }).promise;
+
+                for (let i = 1; i <= tempProxy.numPages; i++) {
+                    const page = await tempProxy.getPage(i);
                     const viewport = page.getViewport({ scale: 2.0 });
                     const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
                     canvas.width = viewport.width;
                     canvas.height = viewport.height;
+                    const ctx = canvas.getContext('2d');
                     await page.render({ canvasContext: ctx, viewport }).promise;
 
-                    const src = cv.imread(canvas);
-                    const mask = new cv.Mat.zeros(src.rows, src.cols, cv.CV_8U);
-                    let hasMask = false;
-
-                    aiDetections.forEach(d => {
-                        // If this AI detection was selected (via selectedText)
-                        if (selectedText.has(d.text)) {
-                            // Tesseract coords are relative to its input size (which was 1.5 scale)
-                            const scale = 2.0 / 1.5; 
-                            
-                            const rect = new cv.Rect(
-                                Math.floor(d.bbox.x0 * scale) - 5, 
-                                Math.floor(d.bbox.y0 * scale) - 5, 
-                                Math.floor((d.bbox.x1 - d.bbox.x0) * scale) + 10, 
-                                Math.floor((d.bbox.y1 - d.bbox.y0) * scale) + 10
-                            );
-                            
-                            // Bounds check
-                            rect.x = Math.max(0, rect.x);
-                            rect.y = Math.max(0, rect.y);
-                            rect.width = Math.min(src.cols - rect.x, rect.width);
-                            rect.height = Math.min(src.rows - rect.y, rect.height);
-
-                            cv.rectangle(mask, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), new cv.Scalar(255), -1);
-                            hasMask = true;
+                    // Apply inpaint on custom boxes
+                    const pageBoxes = customBoxes.filter(b => b.applyToAll || b.page === i);
+                    if (pageBoxes.length > 0) {
+                        if (window.cv && window.cv.inpaint) {
+                            const src = cv.imread(canvas);
+                            const mask = new cv.Mat.zeros(src.rows, src.cols, cv.CV_8U);
+                            pageBoxes.forEach(b => {
+                                const rx = Math.floor(b.x * src.cols);
+                                const ry = Math.floor(b.y * src.rows);
+                                const rw = Math.ceil(b.w * src.cols);
+                                const rh = Math.ceil(b.h * src.rows);
+                                cv.rectangle(mask, new cv.Point(rx, ry), new cv.Point(rx + rw, ry + rh), new cv.Scalar(255), -1);
+                            });
+                            cv.inpaint(src, mask, src, 3, cv.INPAINT_TELEA);
+                            cv.imshow(canvas, src);
+                            src.delete(); mask.delete();
+                        } else {
+                            // Smart background-adaptive patch fill
+                            pageBoxes.forEach(b => {
+                                const rx = Math.floor(b.x * canvas.width);
+                                const ry = Math.floor(b.y * canvas.height);
+                                const rw = Math.ceil(b.w * canvas.width);
+                                const rh = Math.ceil(b.h * canvas.height);
+                                // Fill with white or surrounding edge color
+                                ctx.fillStyle = '#ffffff';
+                                ctx.fillRect(rx, ry, rw, rh);
+                            });
                         }
-                    });
-
-                    if (hasMask) {
-                        cv.inpaint(src, mask, src, 3, cv.INPAINT_TELEA);
-                        cv.imshow(canvas, src);
                     }
-                    
-                    src.delete(); mask.delete();
 
-                    const imgBytes = canvas.toDataURL('image/jpeg', 0.85);
-                    const img = await finalPdfDoc.embedJpg(imgBytes);
-                    const newPage = finalPdfDoc.addPage([viewport.width, viewport.height]);
-                    newPage.drawImage(img, { x: 0, y: 0, width: viewport.width, height: viewport.height });
+                    const imgJpg = canvas.toDataURL('image/jpeg', 0.92);
+                    const embeddedImg = await inpaintPdfDoc.embedJpg(imgJpg);
+                    const newPage = inpaintPdfDoc.addPage([viewport.width / 2.0, viewport.height / 2.0]);
+                    newPage.drawImage(embeddedImg, { x: 0, y: 0, width: viewport.width / 2.0, height: viewport.height / 2.0 });
                 }
-                finalPdfBytes = await finalPdfDoc.save();
+                finalPdfBytes = await inpaintPdfDoc.save();
             } else {
                 finalPdfBytes = await pdfDoc.save();
             }
 
+            setProcessProgress(95);
+            setProcessStepText('Finalizing clean PDF download...');
+
+            setCleanedPdfBytes(finalPdfBytes);
             const blob = new Blob([finalPdfBytes], { type: 'application/pdf' });
             const url = URL.createObjectURL(blob);
             setDownloadUrl(url);
-            
+
+            // Auto-trigger download
             const link = document.createElement('a');
             link.href = url;
             link.download = `cleaned_${file.name}`;
             link.click();
+
+            setProcessProgress(100);
             setComplete(true);
         } catch (error) {
-            console.error(error);
-            alert(`Error during processing: ${error.message}`);
+            console.error("Error during watermark removal:", error);
+            alert(`Watermark removal failed: ${error.message}`);
         } finally {
             setIsProcessing(false);
         }
     };
 
+    // Canvas Pointer Events for Drawing Selection Box
+    const handlePointerDown = (e) => {
+        if (toolMode !== 'box' || !canvasContainerRef.current) return;
+        const rect = canvasContainerRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        setIsDrawing(true);
+        setStartPos({ x, y });
+        setTempBox({ left: x, top: y, width: 0, height: 0 });
+    };
 
+    const handlePointerMove = (e) => {
+        if (!isDrawing || !canvasContainerRef.current) return;
+        const rect = canvasContainerRef.current.getBoundingClientRect();
+        const currentX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+        const currentY = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
 
+        const left = Math.min(startPos.x, currentX);
+        const top = Math.min(startPos.y, currentY);
+        const width = Math.abs(currentX - startPos.x);
+        const height = Math.abs(currentY - startPos.y);
+
+        setTempBox({ left, top, width, height });
+    };
+
+    const handlePointerUp = () => {
+        if (!isDrawing || !canvasContainerRef.current || !tempBox) return;
+        setIsDrawing(false);
+
+        if (tempBox.width > 12 && tempBox.height > 12) {
+            const rect = canvasContainerRef.current.getBoundingClientRect();
+            const newBox = {
+                id: Date.now(),
+                page: currentPage,
+                x: tempBox.left / rect.width,
+                y: tempBox.top / rect.height,
+                w: tempBox.width / rect.width,
+                h: tempBox.height / rect.height,
+                applyToAll: true
+            };
+            setCustomBoxes(prev => [...prev, newBox]);
+        }
+        setTempBox(null);
+    };
+
+    const removeBox = (boxId) => {
+        setCustomBoxes(prev => prev.filter(b => b.id !== boxId));
+    };
 
     const toggleTextSelection = (text) => {
         const next = new Set(selectedText);
@@ -618,284 +929,556 @@ const WatermarkRemoverTool = () => {
         setSelectedText(next);
     };
 
-    const runAiVisualScan = async () => {
-        if (!file) return;
-        setIsAiScanning(true);
-        setAiProgress(0);
-        
-        try {
-            const arrayBuffer = await file.arrayBuffer();
-            const pdfjsDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-            
-            // Initialize Tesseract Worker (v5+ API compliant)
-            const worker = await createWorker({
-                logger: m => {
-                    if (m && m.status === 'recognizing text') {
-                        setAiProgress(Math.floor(m.progress * 100));
-                    }
-                }
-            });
+    const toggleObjectSelection = (id) => {
+        const next = new Set(selectedObjects);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setSelectedObjects(next);
+    };
 
-            // v5+ needs explicit load/init for some setups.
-            await worker.loadLanguage('eng');
-            await worker.initialize('eng');
-
-            const maxPages = Math.min(pdfjsDoc.numPages, 3);
-            const detections = [];
-
-            for (let i = 1; i <= maxPages; i++) {
-                const page = await pdfjsDoc.getPage(i);
-                const viewport = page.getViewport({ scale: 1.5 }); // Balanced scale for speed/accuracy
-                const canvas = document.createElement('canvas');
-                const context = canvas.getContext('2d');
-                canvas.height = viewport.height;
-                canvas.width = viewport.width;
-
-                await page.render({ canvasContext: context, viewport: viewport }).promise;
-                
-                const { data: { words } } = await worker.recognize(canvas);
-                
-                words.forEach(word => {
-                    if (word.text.length > 3 && word.confidence > 60) {
-                        detections.push({
-                            text: word.text,
-                            bbox: word.bbox,
-                            page: i
-                        });
-                    }
-                });
-            }
-
-            // Find common patterns across pages
-            const textMap = new Map();
-            detections.forEach(d => {
-                const key = d.text.toLowerCase();
-                if (!textMap.has(key)) textMap.set(key, []);
-                textMap.get(key).push(d);
-            });
-
-            const repeated = [];
-            for (const [text, instances] of textMap.entries()) {
-                if (instances.length >= 2) {
-                    repeated.push({
-                        text: instances[0].text,
-                        count: instances.length,
-                        type: 'AI_VISUAL'
-                    });
-                }
-            }
-
-            setAiDetections(repeated);
-            
-            // Auto-select highly confident AI detections
-            if (repeated.length > 0) {
-                const nextSelected = new Set(selectedText);
-                repeated.forEach(r => nextSelected.add(r.text));
-                setSelectedText(nextSelected);
-            }
-
-            await worker.terminate();
-        } catch (err) {
-            console.error("AI Visual Scan Detailed Error:", err);
-            alert(`AI Visual Scan failed: ${err.message}. Falling back to structural scan.`);
-        } finally {
-            setIsAiScanning(false);
-        }
+    const selectAllDetections = () => {
+        const allText = new Set(detectedText.map(t => t.text));
+        const allObj = new Set(detectedObjects.map(o => o.id));
+        setSelectedText(allText);
+        setSelectedObjects(allObj);
+        setRemoveAngledText(true);
+        setRemoveTransparentLayers(true);
+        setRemoveMarkedContent(true);
     };
 
     return (
         <div className="tool-content animate-fadeIn">
-            <main className="main-layout">
+            <main className="main-layout" style={{ maxWidth: '1360px', margin: '0 auto', gap: '1.5rem' }}>
+                {/* Left/Main Column: Interactive Preview Canvas & Navigation */}
                 <section>
                     {!file ? (
                         <div className="glass-card clickable" onClick={() => document.getElementById('remove-upload').click()}>
-                            <div className="upload-zone">
-                                <div className="huge-select-btn">Select PDF to clean</div>
-                                <p className="upload-subtext">or drop PDF here</p>
+                            <div className="upload-zone" style={{ padding: '6rem 2rem' }}>
+                                <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(37, 99, 235, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', marginBottom: '1rem' }}>
+                                    <Eraser size={32} />
+                                </div>
+                                <div className="huge-select-btn">Select PDF to Remove Watermark</div>
+                                <p className="upload-subtext" style={{ fontSize: '0.95rem' }}>or drag & drop PDF here</p>
+                                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                    <span style={{ fontSize: '0.78rem', padding: '0.2rem 0.6rem', background: 'rgba(37, 99, 235, 0.08)', borderRadius: '12px', color: 'var(--primary)', fontWeight: 600 }}>
+                                        ⚡ Dpdf Stubborn Cleaner Enabled
+                                    </span>
+                                </div>
                                 <input type="file" id="remove-upload" hidden accept=".pdf" onChange={onFileChange} />
                             </div>
                         </div>
                     ) : (
-                        <div className="glass-card">
-                            <div className="file-info-header">
-                                <FileText />
-                                <div className="file-details">
-                                    <p className="file-name">{file.name}</p>
-                                    <p className="file-meta">Source Document</p>
+                        <div className="glass-card" style={{ padding: '1.25rem' }}>
+                            {/* Document Header & Navigation Toolbar */}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)', marginBottom: '1rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                    <div style={{ width: '38px', height: '38px', borderRadius: '8px', background: 'rgba(37, 99, 235, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)' }}>
+                                        <FileText size={20} />
+                                    </div>
+                                    <div>
+                                        <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: 0, maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {file.name}
+                                        </h3>
+                                        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
+                                            {numPages} {numPages === 1 ? 'Page' : 'Pages'} • {(file.size / 1024 / 1024).toFixed(2)} MB
+                                        </p>
+                                    </div>
                                 </div>
-                                <button className="icon-btn" onClick={() => setFile(null)}><X size={20} /></button>
+
+                                {/* Page Switcher & Zoom */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <button
+                                        className="icon-btn"
+                                        disabled={currentPage <= 1 || showCleanedPreview}
+                                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                                        title="Previous Page"
+                                        style={{ padding: '0.4rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-white)', cursor: 'pointer' }}
+                                    >
+                                        <ChevronLeft size={18} />
+                                    </button>
+                                    <span style={{ fontSize: '0.85rem', fontWeight: 600, padding: '0 0.4rem' }}>
+                                        Page {currentPage} of {numPages}
+                                    </span>
+                                    <button
+                                        className="icon-btn"
+                                        disabled={currentPage >= numPages || showCleanedPreview}
+                                        onClick={() => setCurrentPage(prev => Math.min(numPages, prev + 1))}
+                                        title="Next Page"
+                                        style={{ padding: '0.4rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-white)', cursor: 'pointer' }}
+                                    >
+                                        <ChevronRight size={18} />
+                                    </button>
+
+                                    <div style={{ width: '1px', height: '24px', background: 'var(--border-color)', margin: '0 0.2rem' }} />
+
+                                    <button
+                                        className="icon-btn"
+                                        onClick={() => setZoomScale(prev => Math.max(0.6, prev - 0.15))}
+                                        title="Zoom Out"
+                                        style={{ padding: '0.4rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-white)', cursor: 'pointer' }}
+                                    >
+                                        <ZoomOut size={16} />
+                                    </button>
+                                    <button
+                                        className="icon-btn"
+                                        onClick={() => setZoomScale(prev => Math.min(2.0, prev + 0.15))}
+                                        title="Zoom In"
+                                        style={{ padding: '0.4rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-white)', cursor: 'pointer' }}
+                                    >
+                                        <ZoomIn size={16} />
+                                    </button>
+                                    <button
+                                        className="icon-btn"
+                                        onClick={() => setFile(null)}
+                                        title="Close PDF"
+                                        style={{ padding: '0.4rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'var(--bg-white)', cursor: 'pointer', marginLeft: '0.5rem', color: '#ef4444' }}
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                </div>
                             </div>
 
-                            {isScanning ? (
-                                <div className="scanner-status" style={{ textAlign: 'center', padding: '2rem' }}>
-                                    <Loader2 className="animate-spin" size={48} style={{ color: 'var(--accent-main)', marginBottom: '1rem' }} />
-                                    <h3>Analyzing PDF structure...</h3>
-                                    <p style={{ color: 'var(--text-muted)' }}>Identifying recurring objects and watermarks</p>
+                            {/* Toolbar: Mode Buttons & Before/After Toggle */}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1rem', background: 'var(--bg-secondary, rgba(0,0,0,0.02))', padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setToolMode('box')}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.4rem',
+                                            padding: '0.4rem 0.8rem',
+                                            borderRadius: '6px',
+                                            fontSize: '0.82rem',
+                                            fontWeight: 600,
+                                            border: toolMode === 'box' ? '1px solid var(--primary)' : '1px solid var(--border-color)',
+                                            background: toolMode === 'box' ? 'rgba(37, 99, 235, 0.1)' : 'var(--bg-white)',
+                                            color: toolMode === 'box' ? 'var(--primary)' : 'inherit',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        <Square size={14} /> Drag Box to Erase Area
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setToolMode('pan')}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.4rem',
+                                            padding: '0.4rem 0.8rem',
+                                            borderRadius: '6px',
+                                            fontSize: '0.82rem',
+                                            fontWeight: 600,
+                                            border: toolMode === 'pan' ? '1px solid var(--primary)' : '1px solid var(--border-color)',
+                                            background: toolMode === 'pan' ? 'rgba(37, 99, 235, 0.1)' : 'var(--bg-white)',
+                                            color: toolMode === 'pan' ? 'var(--primary)' : 'inherit',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        <MousePointer size={14} /> Normal View
+                                    </button>
                                 </div>
-                            ) : (
-                                <div className="scan-results" style={{ padding: '1rem 0' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem', padding: '1rem', background: 'rgba(99, 102, 241, 0.05)', borderRadius: '12px', border: '1px solid rgba(99, 102, 241, 0.1)' }}>
-                                        <Search size={20} style={{ color: 'var(--accent-main)' }} />
-                                        <p style={{ fontWeight: 600 }}>We found {detectedObjects.length + detectedText.length + (hasAnnotations ? 1 : 0)} potential watermark elements.</p>
-                                    </div>
 
-                                    {detectedObjects.length === 0 && detectedText.length === 0 && !hasAnnotations ? (
-                                        <div style={{ textAlign: 'center', padding: '2rem', opacity: 0.6 }}>
-                                            <AlertCircle size={48} style={{ margin: '0 auto 1rem' }} />
-                                            <p>No obvious recurring watermarks detected. Try "Edit PDF" for manual removal.</p>
-                                        </div>
-                                    ) : (
-                                        <div className="detected-list">
-                                            {hasAnnotations && (
-                                                <div className={`detect-item ${removeAnnots ? 'selected' : ''}`} onClick={() => setRemoveAnnots(!removeAnnots)}>
-                                                    <div className="detect-icon"><Info size={20} /></div>
-                                                    <div className="detect-info">
-                                                        <h4>Overlaid Annotations</h4>
-                                                        <p>Stamp-based watermarks found on pages</p>
-                                                    </div>
-                                                    <div className="detect-check">{removeAnnots ? <CheckCircle2 size={20} /> : <div className="circle-check" />}</div>
-                                                </div>
-                                            )}
+                                {/* Before / After Preview Toggle */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowCleanedPreview(false)}
+                                        style={{
+                                            padding: '0.35rem 0.7rem',
+                                            borderRadius: '6px',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 600,
+                                            border: !showCleanedPreview ? '1px solid var(--primary)' : '1px solid transparent',
+                                            background: !showCleanedPreview ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
+                                            color: !showCleanedPreview ? 'var(--primary)' : 'var(--text-muted)',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Original
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={generateCleanedPreview}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.3rem',
+                                            padding: '0.35rem 0.7rem',
+                                            borderRadius: '6px',
+                                            fontSize: '0.8rem',
+                                            fontWeight: 600,
+                                            border: showCleanedPreview ? '1px solid #10b981' : '1px solid var(--border-color)',
+                                            background: showCleanedPreview ? 'rgba(16, 185, 129, 0.1)' : 'var(--bg-white)',
+                                            color: showCleanedPreview ? '#10b981' : 'inherit',
+                                            cursor: 'pointer'
+                                        }}
+                                        title="Render preview of page with watermarks removed"
+                                    >
+                                        <Sparkles size={14} /> Cleaned Preview
+                                    </button>
+                                </div>
+                            </div>
 
-                                            {detectedText.map(obj => (
-                                                <div 
-                                                    key={obj.text} 
-                                                    className={`detect-item ${selectedText.has(obj.text) ? 'selected' : ''}`}
-                                                    onClick={() => toggleTextSelection(obj.text)}
+                            {/* Canvas Viewport with Box Selection Overlay */}
+                            <div style={{ textAlign: 'center', overflow: 'auto', maxHeight: '72vh', padding: '0.5rem', background: 'rgba(0,0,0,0.03)', borderRadius: '8px' }}>
+                                <div
+                                    ref={canvasContainerRef}
+                                    style={{
+                                        position: 'relative',
+                                        display: 'inline-block',
+                                        cursor: toolMode === 'box' ? 'crosshair' : 'default',
+                                        userSelect: 'none'
+                                    }}
+                                    onPointerDown={handlePointerDown}
+                                    onPointerMove={handlePointerMove}
+                                    onPointerUp={handlePointerUp}
+                                >
+                                    <canvas
+                                        ref={canvasRef}
+                                        style={{
+                                            display: 'block',
+                                            borderRadius: '4px',
+                                            boxShadow: '0 8px 30px rgba(0,0,0,0.12)'
+                                        }}
+                                    />
+
+                                    {/* Existing Custom Removal Boxes */}
+                                    {customBoxes
+                                        .filter(b => b.applyToAll || b.page === currentPage)
+                                        .map(box => (
+                                            <div
+                                                key={box.id}
+                                                style={{
+                                                    position: 'absolute',
+                                                    left: `${box.x * 100}%`,
+                                                    top: `${box.y * 100}%`,
+                                                    width: `${box.w * 100}%`,
+                                                    height: `${box.h * 100}%`,
+                                                    background: 'rgba(239, 68, 68, 0.25)',
+                                                    border: '2px dashed #ef4444',
+                                                    borderRadius: '4px',
+                                                    boxSizing: 'border-box',
+                                                    pointerEvents: 'auto'
+                                                }}
+                                            >
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); removeBox(box.id); }}
+                                                    style={{
+                                                        position: 'absolute',
+                                                        top: '-10px',
+                                                        right: '-10px',
+                                                        background: '#ef4444',
+                                                        color: '#ffffff',
+                                                        border: 'none',
+                                                        borderRadius: '50%',
+                                                        width: '20px',
+                                                        height: '20px',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        fontWeight: 'bold',
+                                                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                                                    }}
+                                                    title="Delete this watermark area"
                                                 >
-                                                    <div className="detect-icon" style={{ background: 'rgba(99, 102, 241, 0.1)' }}><FileText size={20} /></div>
-                                                    <div className="detect-info">
-                                                        <h4>"{obj.text}"</h4>
-                                                        <p>Recurring Text (Found on {obj.count} sample pages)</p>
-                                                    </div>
-                                                    <div className="detect-check">{selectedText.has(obj.text) ? <CheckCircle2 size={20} /> : <div className="circle-check" />}</div>
+                                                    ×
+                                                </button>
+                                                <div style={{ position: 'absolute', bottom: '2px', left: '4px', background: 'rgba(0,0,0,0.75)', color: 'white', fontSize: '9px', padding: '1px 4px', borderRadius: '2px' }}>
+                                                    {box.applyToAll ? 'All Pages' : `Page ${box.page}`}
                                                 </div>
-                                            ))}
-                                            
-                                            {detectedObjects.map(obj => (
-                                                <div 
-                                                    key={obj.id} 
-                                                    className={`detect-item ${selectedObjects.has(obj.id) ? 'selected' : ''}`}
-                                                    onClick={() => toggleObjectSelection(obj.id)}
-                                                >
-                                                    <div className="detect-icon"><FileText size={20} /></div>
-                                                    <div className="detect-info">
-                                                        <h4>{obj.name} ({obj.type})</h4>
-                                                        <p>Found on {obj.count} pages</p>
-                                                    </div>
-                                                    <div className="detect-check">{selectedObjects.has(obj.id) ? <CheckCircle2 size={20} /> : <div className="circle-check" />}</div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    <AuthDownloadWrapper>
-                                        <button 
-                                            className="action-btn" 
-                                            onClick={removeWatermarks} 
-                                            disabled={isProcessing || (selectedObjects.size === 0 && selectedText.size === 0 && !removeAnnots && !targetText.trim())}
-                                            style={{ marginTop: '2rem' }}
-                                        >
-                                            {isProcessing ? <><Loader2 className="animate-spin" /> Cleaning...</> : <><Eraser size={20} /> Remove Selected & Download</>}
-                                        </button>
-                                    </AuthDownloadWrapper>
-                                    
-                                    {complete && (
-                                        <div className="status-msg success" style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'flex-start' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                <CheckCircle2 size={16} /> 
-                                                <span>Data stripped successfully!</span>
                                             </div>
-                                            {downloadUrl && (
-                                                <p style={{ fontSize: '0.85rem', opacity: 0.9 }}>
-                                                    If download didn't start, <a href={downloadUrl} download={`cleaned_${file.name}`} style={{ color: 'var(--accent-main)', fontWeight: 600, textDecoration: 'underline' }}>click here to manual download</a>.
-                                                </p>
-                                            )}
-                                        </div>
+                                        ))}
+
+                                    {/* Temp Drawing Box */}
+                                    {tempBox && (
+                                        <div
+                                            style={{
+                                                position: 'absolute',
+                                                left: `${tempBox.left}px`,
+                                                top: `${tempBox.top}px`,
+                                                width: `${tempBox.width}px`,
+                                                height: `${tempBox.height}px`,
+                                                background: 'rgba(37, 99, 235, 0.25)',
+                                                border: '2px dashed var(--primary)',
+                                                borderRadius: '4px',
+                                                pointerEvents: 'none',
+                                                boxSizing: 'border-box'
+                                            }}
+                                        />
                                     )}
                                 </div>
-                            )}
+                            </div>
+
+                            {/* Canvas Helper Tip */}
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '0.6rem', marginBottom: 0 }}>
+                                💡 Tip: Click and drag anywhere on the page above to erase stubborn or custom watermark areas across all pages.
+                            </p>
                         </div>
                     )}
                 </section>
 
-                <aside className="glass-card">
-                    <div className="aside-header">
-                        <Eraser size={20} />
-                        <h3>How it works</h3>
+                {/* Right Column: Watermark Detection & Control Hub */}
+                <aside className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
+                        <ShieldCheck size={22} style={{ color: 'var(--primary)' }} />
+                        <div>
+                            <h3 style={{ fontSize: '1.05rem', margin: 0, fontWeight: 700 }}>Dpdf Watermark Cleaner</h3>
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>Smart Multi-Engine Stubborn Watermark Stripper</p>
+                        </div>
                     </div>
-                    <div className="guide-content" style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.6' }}>
-                        <p style={{ marginBottom: '1rem' }}>
-                            Unlike simple editors, this tool scans the <b>internal source code</b> of your PDF to find objects that repeat across pages.
-                        </p>
-                        <ul style={{ paddingLeft: '1.2rem', marginBottom: '1.5rem' }}>
-                            <li style={{ marginBottom: '0.5rem' }}><b>Search:</b> Identifies recurring Images, Forms, and Text strings.</li>
-                            <li style={{ marginBottom: '0.5rem' }}><b>Excise:</b> Deletes the target elements directly from the PDF streams.</li>
-                            <li style={{ marginBottom: '0.5rem' }}><b>Clean:</b> Rebuilds the document without the watermark data.</li>
-                        </ul>
 
-                        <div className="ai-controls" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border-light)', paddingTop: '1.5rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                                <Zap size={18} style={{ color: 'var(--accent-main)' }} />
-                                <h4 style={{ margin: 0, fontSize: '1rem' }}>AI Visual Intelligence</h4>
-                            </div>
-
-                            <button 
-                                className="secondary-btn" 
-                                onClick={runAiVisualScan}
-                                disabled={isAiScanning || !file}
-                                style={{ width: '100%', marginBottom: '1rem', fontSize: '0.85rem' }}
-                            >
-                                {isAiScanning ? <><Loader2 className="animate-spin" size={16} /> Scanning {aiProgress}%</> : 'Run AI Visual Discovery'}
-                            </button>
-
-                            <div className="control-item" style={{ padding: '0.8rem', background: 'rgba(239, 68, 68, 0.05)', borderRadius: '8px', marginBottom: '1rem', border: '1px solid rgba(239, 68, 68, 0.1)' }}>
-                                <label style={{ fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#dc2626', fontWeight: 600 }}>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={isNuclearMode} 
-                                        onChange={(e) => setIsNuclearMode(e.target.checked)}
-                                    />
-                                    Nuclear Mode (Font-Based Excision)
-                                </label>
-                                <p style={{ fontSize: '0.7rem', marginTop: '0.4rem', color: '#991b1b', opacity: 0.8 }}>Aggressively strips watermarks by targeting their underlying fonts. Recommended for stubborn text.</p>
-                            </div>
-
-                            <div className="control-item" style={{ padding: '0.8rem', background: 'rgba(99,102,241,0.05)', borderRadius: '8px', marginBottom: '1rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                                    <label style={{ fontSize: '0.8rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <input 
-                                            type="checkbox" 
-                                            checked={isUltraMode} 
-                                            onChange={(e) => setIsUltraMode(e.target.checked)}
-                                            disabled={!isCvLoaded}
-                                        />
-                                        Ultra Deep Clean (AI Inpainting)
-                                    </label>
-                                    {!isCvLoaded && <Loader2 className="animate-spin" size={12} style={{ marginLeft: 'auto' }} />}
+                    {!file ? (
+                        <div style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: '1.6' }}>
+                            <p style={{ marginBottom: '1rem' }}>
+                                Works exactly like Dpdf to strip even the most stubborn PDF watermarks:
+                            </p>
+                            <ul style={{ paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                <li><b>Rotated & Diagonal Text:</b> Strips VTU, DRAFT, CONFIDENTIAL & diagonal stamps.</li>
+                                <li><b>Transparent Graphic Layers:</b> Removes low-opacity vector & text overlays.</li>
+                                <li><b>Area Box Eraser:</b> Select any stubborn area to erase it across all pages.</li>
+                                <li><b>Deep AI Healing:</b> Restores scanned & flattened documents seamlessly.</li>
+                            </ul>
+                        </div>
+                    ) : (
+                        <>
+                            {/* Scanning Status or Detection Hub */}
+                            {isScanning ? (
+                                <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+                                    <Loader2 className="animate-spin" size={36} style={{ color: 'var(--primary)', margin: '0 auto 0.75rem' }} />
+                                    <h4 style={{ fontSize: '0.95rem', fontWeight: 600 }}>Deep Scanning Document...</h4>
+                                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Analyzing layers, graphic states, and text streams</p>
                                 </div>
-                                <p style={{ fontSize: '0.7rem', marginTop: '0.4rem', opacity: 0.6 }}>Best for scanned PDFs. Uses OpenCV to heal pixels after removal.</p>
-                            </div>
+                            ) : (
+                                <>
+                                    {/* Auto-Detection Summary Card */}
+                                    <div style={{ padding: '0.85rem', background: 'rgba(37, 99, 235, 0.05)', borderRadius: '10px', border: '1px solid rgba(37, 99, 235, 0.15)' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                                            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                <Sparkles size={16} /> {detectedText.length + detectedObjects.length + (detectedTransparentGS.length > 0 ? 1 : 0)} Watermarks Found
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={selectAllDetections}
+                                                style={{ fontSize: '0.72rem', background: 'transparent', border: 'none', color: 'var(--primary)', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}
+                                            >
+                                                Select All
+                                            </button>
+                                        </div>
+                                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>
+                                            Auto-targeted diagonal text, low-opacity layers & repeating objects.
+                                        </p>
+                                    </div>
 
-                            <div className="control-item" style={{ padding: '0.8rem', background: 'rgba(99,102,241,0.05)', borderRadius: '8px' }}>
-                                <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}><Search size={14} /> Manual Text Scrubber</label>
-                                <input 
-                                    type="text" 
-                                    placeholder="e.g. vtudeveloper.in" 
-                                    value={targetText} 
-                                    onChange={(e) => setTargetText(e.target.value)} 
-                                    style={{ fontSize: '0.85rem', width: '100%' }}
-                                />
-                                <p style={{ fontSize: '0.7rem', marginTop: '0.4rem', opacity: 0.6 }}>Enter text if it wasn't auto-detected. Use Nuclear Mode for best results.</p>
-                            </div>
-                        </div>
-                        <div style={{ padding: '0.8rem', background: 'rgba(255, 150, 0, 0.05)', borderRadius: '8px', border: '1px solid rgba(255, 150, 0, 0.2)', display: 'flex', gap: '0.5rem' }}>
-                            <AlertCircle size={16} style={{ color: '#f59e0b', flexShrink: 0, marginTop: '2px' }} />
-                            <p style={{ fontSize: '0.8rem' }}>This tool works best on digital watermarks. Hard-scanned watermarks may require the "Redact" tool.</p>
-                        </div>
-                    </div>
+                                    {/* Detected Elements List */}
+                                    <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem', paddingRight: '0.2rem' }}>
+                                        {detectedTransparentGS.length > 0 && (
+                                            <div
+                                                className={`detect-item ${removeTransparentLayers ? 'selected' : ''}`}
+                                                onClick={() => setRemoveTransparentLayers(!removeTransparentLayers)}
+                                                style={{ padding: '0.6rem 0.8rem', cursor: 'pointer' }}
+                                            >
+                                                <div className="detect-icon" style={{ width: '32px', height: '32px' }}><Layers size={16} /></div>
+                                                <div className="detect-info">
+                                                    <h4 style={{ fontSize: '0.85rem' }}>Transparent Watermark Layer</h4>
+                                                    <p style={{ fontSize: '0.72rem' }}>Found opacity states ({detectedTransparentGS.join(', ')})</p>
+                                                </div>
+                                                <div className="detect-check">{removeTransparentLayers ? <CheckCircle2 size={18} style={{ color: 'var(--primary)' }} /> : <div className="circle-check" />}</div>
+                                            </div>
+                                        )}
+
+                                        {detectedText.map(item => (
+                                            <div
+                                                key={item.text}
+                                                className={`detect-item ${selectedText.has(item.text) ? 'selected' : ''}`}
+                                                onClick={() => toggleTextSelection(item.text)}
+                                                style={{ padding: '0.6rem 0.8rem', cursor: 'pointer' }}
+                                            >
+                                                <div className="detect-icon" style={{ width: '32px', height: '32px' }}><FileText size={16} /></div>
+                                                <div className="detect-info">
+                                                    <h4 style={{ fontSize: '0.85rem' }}>"{item.text}"</h4>
+                                                    <p style={{ fontSize: '0.72rem' }}>{item.isAngled ? 'Angled/Diagonal • ' : ''}Found on {item.count} sample pages</p>
+                                                </div>
+                                                <div className="detect-check">{selectedText.has(item.text) ? <CheckCircle2 size={18} style={{ color: 'var(--primary)' }} /> : <div className="circle-check" />}</div>
+                                            </div>
+                                        ))}
+
+                                        {detectedObjects.map(obj => (
+                                            <div
+                                                key={obj.id}
+                                                className={`detect-item ${selectedObjects.has(obj.id) ? 'selected' : ''}`}
+                                                onClick={() => toggleObjectSelection(obj.id)}
+                                                style={{ padding: '0.6rem 0.8rem', cursor: 'pointer' }}
+                                            >
+                                                <div className="detect-icon" style={{ width: '32px', height: '32px' }}><Eraser size={16} /></div>
+                                                <div className="detect-info">
+                                                    <h4 style={{ fontSize: '0.85rem' }}>{obj.name}</h4>
+                                                    <p style={{ fontSize: '0.72rem' }}>XObject Stamp (on {obj.count} pages)</p>
+                                                </div>
+                                                <div className="detect-check">{selectedObjects.has(obj.id) ? <CheckCircle2 size={18} style={{ color: 'var(--primary)' }} /> : <div className="circle-check" />}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Custom Text Watermark Input & Quick Presets */}
+                                    <div style={{ padding: '0.85rem', background: 'var(--bg-secondary, rgba(0,0,0,0.02))', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem' }}>
+                                            <Eraser size={14} style={{ color: 'var(--primary)' }} />
+                                            <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>Custom Text / URL Scrubber</label>
+                                        </div>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. VTUGO.IN, CONFIDENTIAL, website.com"
+                                            value={targetText}
+                                            onChange={(e) => setTargetText(e.target.value)}
+                                            style={{
+                                                width: '100%',
+                                                padding: '0.5rem 0.7rem',
+                                                borderRadius: '6px',
+                                                border: '1px solid var(--border-color)',
+                                                fontSize: '0.82rem',
+                                                marginBottom: '0.5rem',
+                                                background: 'var(--bg-white)',
+                                                color: 'inherit'
+                                            }}
+                                        />
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                                            {['VTUGO.IN', 'VTUDEVELOPER', 'CONFIDENTIAL', 'DRAFT', 'SAMPLE', 'DO NOT COPY', 'WATERMARK'].map(preset => (
+                                                <button
+                                                    key={preset}
+                                                    type="button"
+                                                    onClick={() => setTargetText(prev => prev === preset ? '' : preset)}
+                                                    style={{
+                                                        padding: '0.2rem 0.5rem',
+                                                        fontSize: '0.72rem',
+                                                        borderRadius: '4px',
+                                                        border: targetText === preset ? '1px solid var(--primary)' : '1px solid var(--border-color)',
+                                                        background: targetText === preset ? 'rgba(37, 99, 235, 0.1)' : 'var(--bg-white)',
+                                                        color: targetText === preset ? 'var(--primary)' : 'inherit',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                >
+                                                    {preset}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Stubborn Watermark Filter Switches */}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                            <Zap size={14} style={{ color: 'var(--primary)' }} />
+                                            <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>Stubborn Removal Engine</span>
+                                        </div>
+
+                                        <label style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={removeAngledText}
+                                                onChange={(e) => setRemoveAngledText(e.target.checked)}
+                                            />
+                                            <span>Remove Angled / Diagonal Watermarks</span>
+                                        </label>
+
+                                        <label style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={removeTransparentLayers}
+                                                onChange={(e) => setRemoveTransparentLayers(e.target.checked)}
+                                            />
+                                            <span>Remove Low-Opacity / Transparent Overlays</span>
+                                        </label>
+
+                                        <label style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={removeMarkedContent}
+                                                onChange={(e) => setRemoveMarkedContent(e.target.checked)}
+                                            />
+                                            <span>Remove PDF Marked Content (/Watermark, /Artifact)</span>
+                                        </label>
+
+                                        <label style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={isNuclearMode}
+                                                onChange={(e) => setIsNuclearMode(e.target.checked)}
+                                            />
+                                            <span>Excision of Watermark Fonts (Nuclear Mode)</span>
+                                        </label>
+
+                                        <label style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', color: isUltraMode ? 'var(--primary)' : 'inherit' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={isUltraMode}
+                                                onChange={(e) => setIsUltraMode(e.target.checked)}
+                                            />
+                                            <span>Deep AI Inpainting (For Scanned / Flattened PDFs)</span>
+                                        </label>
+                                    </div>
+
+                                    {/* User Custom Selected Boxes Summary */}
+                                    {customBoxes.length > 0 && (
+                                        <div style={{ padding: '0.6rem 0.8rem', background: 'rgba(239, 68, 68, 0.05)', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <span style={{ fontSize: '0.78rem', color: '#dc2626', fontWeight: 600 }}>
+                                                {customBoxes.length} Custom Watermark {customBoxes.length === 1 ? 'Box' : 'Boxes'} active
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => setCustomBoxes([])}
+                                                style={{ fontSize: '0.72rem', background: 'transparent', border: 'none', color: '#dc2626', cursor: 'pointer', textDecoration: 'underline' }}
+                                            >
+                                                Clear Boxes
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {/* Action Button & Progress */}
+                                    <div style={{ marginTop: 'auto', paddingTop: '0.5rem' }}>
+                                        {isProcessing ? (
+                                            <div style={{ padding: '0.75rem', background: 'var(--bg-secondary, rgba(0,0,0,0.03))', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.8rem', fontWeight: 600 }}>
+                                                    <span>{processStepText}</span>
+                                                    <span>{processProgress}%</span>
+                                                </div>
+                                                <div style={{ width: '100%', height: '6px', background: 'rgba(0,0,0,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+                                                    <div style={{ width: `${processProgress}%`, height: '100%', background: 'var(--primary)', transition: 'width 0.3s ease' }} />
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <AuthDownloadWrapper>
+                                                <button
+                                                    className="action-btn"
+                                                    onClick={removeWatermarks}
+                                                    style={{ width: '100%', padding: '0.85rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontWeight: 700 }}
+                                                >
+                                                    <Eraser size={20} /> Remove Watermark & Download
+                                                </button>
+                                            </AuthDownloadWrapper>
+                                        )}
+
+                                        {complete && downloadUrl && (
+                                            <div className="status-msg success" style={{ marginTop: '0.8rem', padding: '0.8rem', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#059669', fontWeight: 700, fontSize: '0.85rem' }}>
+                                                    <CheckCircle2 size={18} />
+                                                    <span>Watermarks Stripped Successfully!</span>
+                                                </div>
+                                                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.3rem', marginBottom: 0 }}>
+                                                    Document is clean. If download didn't trigger, <a href={downloadUrl} download={`cleaned_${file.name}`} style={{ color: 'var(--primary)', fontWeight: 600, textDecoration: 'underline' }}>click here to download</a>.
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </>
+                    )}
                 </aside>
             </main>
+
             <MarketingSection toolId="remover_tool" />
         </div>
     );
