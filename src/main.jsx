@@ -19,38 +19,7 @@ const ClerkProviderWithRoutes = ({ children }) => {
   return (
     <ClerkProvider 
       publishableKey={PUBLISHABLE_KEY} 
-      routerPush={(to) => {
-        if (to.startsWith('/')) {
-          navigate(to);
-        } else {
-          try {
-            const url = new URL(to, window.location.origin);
-            if (url.origin === window.location.origin) {
-              navigate(url.pathname + url.search + url.hash);
-            } else {
-              window.location.href = to;
-            }
-          } catch (e) {
-            window.location.href = to;
-          }
-        }
-      }}
-      routerReplace={(to) => {
-        if (to.startsWith('/')) {
-          navigate(to, { replace: true });
-        } else {
-          try {
-            const url = new URL(to, window.location.origin);
-            if (url.origin === window.location.origin) {
-              navigate(url.pathname + url.search + url.hash, { replace: true });
-            } else {
-              window.location.replace(to);
-            }
-          } catch (e) {
-            window.location.replace(to);
-          }
-        }
-      }}
+      navigate={(to) => navigate(to)}
     >
       {children}
     </ClerkProvider>

@@ -630,10 +630,10 @@ function App() {
           )}
 
           <SignedOut>
-            <SignInButton mode="modal" afterSignInUrl={location.pathname} afterSignUpUrl={location.pathname}>
+            <SignInButton mode="modal" fallbackRedirectUrl={location.pathname} signUpFallbackRedirectUrl={location.pathname}>
               <button className="auth-btn login">Log in</button>
             </SignInButton>
-            <SignUpButton mode="modal" afterSignInUrl={location.pathname} afterSignUpUrl={location.pathname}>
+            <SignUpButton mode="modal" fallbackRedirectUrl={location.pathname} signInFallbackRedirectUrl={location.pathname}>
               <button className="auth-btn signup">
                 <span className="signup-text">Sign up</span>
                 <User className="signup-icon" size={20} />
@@ -642,7 +642,7 @@ function App() {
           </SignedOut>
 
           <SignedIn>
-            <UserButton afterSignOutUrl="/" appearance={{ elements: { userButtonAvatarBox: { width: 36, height: 36 } } }} />
+            <UserButton fallbackRedirectUrl="/" appearance={{ elements: { userButtonAvatarBox: { width: 36, height: 36 } } }} />
           </SignedIn>
         </div>
       </header>

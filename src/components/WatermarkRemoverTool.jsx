@@ -158,24 +158,34 @@ const decodePdfToken = (rawToken) => {
     return '';
 };
 
-const defaultWatermarkRegex = /vtugo|vtudeveloper|vtu|watermark|confidential|draft|sample|do not copy|studied smart|thanks to|copyright|preview|\.in|\.com/i;
+// Precise watermark pattern matching:
+// - Must be at least 3 characters long
+// - Avoid matching short prepositions like 'in', 'pu', 'to', 'of', 'at'
+const defaultWatermarkRegex = /\b(vtugo|vtudeveloper|vtusync|vtu|confidential|draft|sample|do not copy|studied smart|thanks to|watermark|copyright|preview)\b/i;
 
 const isWatermarkMatch = (decodedText, targetKeywords = []) => {
     if (!decodedText) return false;
     const clean = decodedText.toLowerCase().trim();
-    if (!clean) return false;
+    if (clean.length < 3) return false; // NEVER delete short words or equation symbols
 
+    // Full regex match on text
     if (defaultWatermarkRegex.test(clean)) return true;
 
+    // Domain pattern match (e.g. vtusync.in, vtugo.in, sample.com)
+    if (/\b[a-z0-9_-]{3,}\.(in|com|org|net|edu)\b/i.test(clean)) return true;
+
     const alphaOnly = clean.replace(/[^a-z0-9]/g, '');
-    if (alphaOnly && defaultWatermarkRegex.test(alphaOnly)) return true;
+    if (alphaOnly.length >= 4 && defaultWatermarkRegex.test(alphaOnly)) return true;
 
     for (const target of targetKeywords) {
         if (!target) continue;
         const normTarget = target.toLowerCase().trim();
-        const normAlpha = normTarget.replace(/[^a-z0-9]/g, '');
-        if (clean.includes(normTarget) || normTarget.includes(clean)) return true;
-        if (normAlpha && (alphaOnly.includes(normAlpha) || normAlpha.includes(alphaOnly))) return true;
+        if (normTarget.length < 3) continue;
+
+        // The text must contain the target (e.g. target="vtusync.in", clean="thanks to vtusync.in")
+        // OR the clean word is an exact match of target (for length >= 4)
+        if (clean.includes(normTarget)) return true;
+        if (clean.length >= 4 && normTarget === clean) return true;
     }
 
     return false;
@@ -248,7 +258,7 @@ const WatermarkRemoverTool = () => {
 
     // Detection Data
     const [detectedObjects, setDetectedObjects] = useState([]); // {id, name, count, type}
-    const [detectedText, setDetectedText] = useState([]); // {text, count, confidence, isPositional, isAngled, fontName}
+    const [detectedText, setDetectedText] = useState([]); // {text, count, confidence, isPositional, isAngled}
     const [detectedTransparentGS, setDetectedTransparentGS] = useState([]); // names of ExtGStates with ca < 0.88
     const [hasAnnotations, setHasAnnotations] = useState(false);
 
@@ -256,14 +266,12 @@ const WatermarkRemoverTool = () => {
     const [selectedObjects, setSelectedObjects] = useState(new Set());
     const [selectedText, setSelectedText] = useState(new Set());
     const [targetText, setTargetText] = useState('');
-    const [watermarkFonts, setWatermarkFonts] = useState(new Set());
 
     // Stubborn Watermark Filter Toggles (Dpdf parity)
     const [removeAngledText, setRemoveAngledText] = useState(true);
     const [removeTransparentLayers, setRemoveTransparentLayers] = useState(true);
     const [removeMarkedContent, setRemoveMarkedContent] = useState(true);
     const [removeAnnots, setRemoveAnnots] = useState(true);
-    const [isNuclearMode, setIsNuclearMode] = useState(true);
     const [isUltraMode, setIsUltraMode] = useState(false); // OpenCV Inpainting for Scanned PDFs
     const [isCvLoaded, setIsCvLoaded] = useState(false);
 
@@ -297,7 +305,6 @@ const WatermarkRemoverTool = () => {
             setHasAnnotations(false);
             setSelectedObjects(new Set());
             setSelectedText(new Set());
-            setWatermarkFonts(new Set());
             setCurrentPage(1);
 
             try {
@@ -378,7 +385,6 @@ const WatermarkRemoverTool = () => {
 
             // 2. Sample PDF text with PDF.js
             const textUsage = new Map();
-            const totalSamplePages = Math.min(proxy.numPages, 12);
             const samplePages = new Set();
             for (let i = 1; i <= Math.min(proxy.numPages, 5); i++) samplePages.add(i);
             for (let i = Math.max(1, Math.floor(proxy.numPages / 2) - 2); i <= Math.min(proxy.numPages, Math.floor(proxy.numPages / 2) + 2); i++) samplePages.add(i);
@@ -392,22 +398,26 @@ const WatermarkRemoverTool = () => {
 
                     for (const item of content.items) {
                         const s = item.str.trim();
+                        // Only consider text of length >= 3 to avoid matching math symbols or prepositions
                         if (s.length >= 3) {
-                            const isRotated = Math.abs(item.transform[1]) > 0.08 || Math.abs(item.transform[2]) > 0.08;
-                            const fontKey = item.fontName || 'F';
-                            pageStrings.add(`${s}|@|${isRotated ? 'angled' : 'straight'}|@|${fontKey}`);
+                            const a = item.transform[0];
+                            const b = item.transform[1];
+                            const c = item.transform[2];
+                            const angleDeg = Math.abs(Math.atan2(b, a) * 180 / Math.PI);
+                            // Truly angled/diagonal watermark check (not italic slant where b=0)
+                            const isTrulyAngled = (angleDeg >= 18 && angleDeg <= 162) && Math.abs(b) > 0.25;
+                            pageStrings.add(`${s}|@|${isTrulyAngled ? 'angled' : 'straight'}`);
                         }
                     }
 
                     for (const entry of pageStrings) {
-                        const [text, angleStatus, fontKey] = entry.split('|@|');
+                        const [text, angleStatus] = entry.split('|@|');
                         if (!textUsage.has(text)) {
-                            textUsage.set(text, { count: 0, isAngled: angleStatus === 'angled', fonts: new Set() });
+                            textUsage.set(text, { count: 0, isAngled: angleStatus === 'angled' });
                         }
                         const rec = textUsage.get(text);
                         rec.count++;
                         if (angleStatus === 'angled') rec.isAngled = true;
-                        rec.fonts.add(fontKey);
                     }
                 } catch (e) {
                     console.warn("Text sampling error on page", pNum, e);
@@ -420,9 +430,9 @@ const WatermarkRemoverTool = () => {
                     text,
                     count: data.count,
                     confidence: data.count / samplePages.size,
-                    isAngled: data.isAngled,
-                    fontName: Array.from(data.fonts)[0]
+                    isAngled: data.isAngled
                 }))
+                .filter(item => isWatermarkMatch(item.text) || item.isAngled || item.confidence >= 0.7)
                 .sort((a, b) => b.count - a.count);
 
             setDetectedText(potentialTextWatermarks);
@@ -439,10 +449,9 @@ const WatermarkRemoverTool = () => {
             setDetectedObjects(potentialObjects);
             setHasAnnotations(totalAnnotations > 0);
 
-            // Auto-select highly likely watermarks
+            // Auto-select highly confident watermarks
             const autoSelectedObj = new Set();
             const autoSelectedTxt = new Set();
-            const autoFonts = new Set();
 
             potentialObjects.forEach(obj => {
                 if (obj.count / pages.length > 0.6 || /wm|watermark|bg|draft|copy/i.test(obj.name)) {
@@ -451,18 +460,13 @@ const WatermarkRemoverTool = () => {
             });
 
             potentialTextWatermarks.forEach(t => {
-                if (t.confidence > 0.5 || isWatermarkMatch(t.text) || t.isAngled) {
+                if (isWatermarkMatch(t.text) || t.isAngled) {
                     autoSelectedTxt.add(t.text);
-                    if (t.fontName) {
-                        const internalName = t.fontName.split('_').pop();
-                        autoFonts.add(internalName.toUpperCase());
-                    }
                 }
             });
 
             setSelectedObjects(autoSelectedObj);
             setSelectedText(autoSelectedTxt);
-            setWatermarkFonts(autoFonts);
 
         } catch (err) {
             console.error("Deep Scan error", err);
@@ -507,7 +511,7 @@ const WatermarkRemoverTool = () => {
         try {
             const arrayBuffer = await file.arrayBuffer();
             const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-            
+
             // Extract single current page for fast preview
             const singlePageDoc = await PDFDocument.create();
             const [copiedPage] = await singlePageDoc.copyPages(pdfDoc, [currentPage - 1]);
@@ -626,24 +630,24 @@ const WatermarkRemoverTool = () => {
                             while (p >= 0 && tokens[p].type === 'ws') p--;
                             if (p >= 0 && (tokens[p].type === 'name' || tokens[p].raw.startsWith('/'))) {
                                 const gsName = tokens[p].raw.replace(/^\//, '');
-                                if (transparentGS.has(gsName)) {
-                                    curState.isTransparent = true;
-                                }
+                                curState.isTransparent = transparentGS.has(gsName);
                             }
                         } else if (t.raw === 'cm') {
                             const nums = getPreviousNumbers(tokens, idx, 6);
                             if (nums.length === 6) {
                                 curState.matrix = nums;
-                                const b = nums[1], c = nums[2];
-                                if (Math.abs(b) > 0.08 || Math.abs(c) > 0.08) {
-                                    curState.isAngled = true;
-                                }
+                                const a = nums[0], b = nums[1], c = nums[2];
+                                const angleDeg = Math.abs(Math.atan2(b, a) * 180 / Math.PI);
+                                // True diagonal rotation check (b and c must be non-zero and angle between 18 and 162)
+                                curState.isAngled = (angleDeg >= 18 && angleDeg <= 162) && Math.abs(b) > 0.25 && Math.abs(c) > 0.25;
                             }
                         } else if (t.raw === 'BT') {
                             curState.inText = true;
                             curState.textMatrix = [1, 0, 0, 1, 0, 0];
+                            curState.isAngled = false;
                         } else if (t.raw === 'ET') {
                             curState.inText = false;
+                            curState.isAngled = false;
                         } else if (t.raw === 'Tf') {
                             let p = idx - 1;
                             while (p >= 0 && (tokens[p].type === 'ws' || !isNaN(tokens[p].raw))) p--;
@@ -654,10 +658,10 @@ const WatermarkRemoverTool = () => {
                             const nums = getPreviousNumbers(tokens, idx, 6);
                             if (nums.length === 6) {
                                 curState.textMatrix = nums;
-                                const b = nums[1], c = nums[2];
-                                if (Math.abs(b) > 0.08 || Math.abs(c) > 0.08) {
-                                    curState.isAngled = true;
-                                }
+                                const a = nums[0], b = nums[1], c = nums[2];
+                                const angleDeg = Math.abs(Math.atan2(b, a) * 180 / Math.PI);
+                                // Recalculate isAngled for every Tm so it resets when text is horizontal!
+                                curState.isAngled = (angleDeg >= 18 && angleDeg <= 162) && Math.abs(b) > 0.25 && Math.abs(c) > 0.25;
                             }
                         } else if (t.raw === 'BDC' || t.raw === 'BMC') {
                             let p = idx - 1;
@@ -684,27 +688,24 @@ const WatermarkRemoverTool = () => {
                         } else if (['Tj', 'TJ', "'", '"'].includes(t.raw)) {
                             let isTarget = false;
 
-                            // Condition 1: Transparent layer
-                            if (removeTransparentLayers && curState.isTransparent) isTarget = true;
-
-                            // Condition 2: Rotated/angled watermark text
-                            if (removeAngledText && curState.isAngled) isTarget = true;
-
-                            // Condition 3: Marked content watermark
-                            if (removeMarkedContent && curState.inMarkedWatermark) isTarget = true;
-
-                            // Condition 4: Known watermark font
-                            if (isNuclearMode && curState.font && watermarkFonts.has(curState.font.toUpperCase())) isTarget = true;
-
-                            // Condition 5: Text string match
                             let p = idx - 1;
                             while (p >= 0 && tokens[p].type === 'ws') p--;
-                            if (p >= 0) {
-                                const decoded = decodePdfToken(tokens[p].raw);
-                                if (isWatermarkMatch(decoded, targetKeywords)) isTarget = true;
-                            }
+                            const rawArg = p >= 0 ? tokens[p].raw : '';
+                            const decodedStr = decodePdfToken(rawArg);
 
-                            // Condition 6: Falls inside user-drawn box
+                            // Condition 1: Rotated diagonal watermark text (e.g. 45 deg VTUSYNC.IN)
+                            if (removeAngledText && curState.isAngled) isTarget = true;
+
+                            // Condition 2: Text under transparent ExtGState overlay
+                            if (removeTransparentLayers && curState.isTransparent) isTarget = true;
+
+                            // Condition 3: Marked content watermark (/Watermark, /Artifact)
+                            if (removeMarkedContent && curState.inMarkedWatermark) isTarget = true;
+
+                            // Condition 4: Text string match against watermark patterns
+                            if (isWatermarkMatch(decodedStr, targetKeywords)) isTarget = true;
+
+                            // Condition 5: Falls inside user-drawn box
                             if (relevantBoxes.length > 0 && pageWidth && pageHeight) {
                                 const tx = curState.textMatrix[4] || curState.matrix[4] || 0;
                                 const ty = curState.textMatrix[5] || curState.matrix[5] || 0;
@@ -721,20 +722,14 @@ const WatermarkRemoverTool = () => {
                             }
 
                             if (isTarget) {
-                                if (p >= 0 && (tokens[p].type === 'str' || tokens[p].type === 'hex' || tokens[p].type === 'arr_open' || tokens[p].raw.endsWith(']'))) {
+                                if (p >= 0) {
                                     tokens[p].raw = t.raw === 'TJ' ? '[]' : '()';
                                     modified = true;
                                 }
                             }
-                        } else if (['f', 'F', 'f*', 'S', 's', 'B', 'B*', 'b', 'b*'].includes(t.raw)) {
-                            // Turn off vector path painting for watermarks
-                            if ((removeTransparentLayers && curState.isTransparent) ||
-                                (removeAngledText && curState.isAngled) ||
-                                (removeMarkedContent && curState.inMarkedWatermark)) {
-                                t.raw = 'n'; // Ends path without painting
-                                modified = true;
-                            }
                         }
+                        // NOTE: Vector paths (m, l, c, re, S, f, B) are deliberately PRESERVED
+                        // to ensure underlines, fraction bars, square roots, and table borders are never lost!
                     }
                 }
 
@@ -832,7 +827,6 @@ const WatermarkRemoverTool = () => {
                                 const ry = Math.floor(b.y * canvas.height);
                                 const rw = Math.ceil(b.w * canvas.width);
                                 const rh = Math.ceil(b.h * canvas.height);
-                                // Fill with white or surrounding edge color
                                 ctx.fillStyle = '#ffffff';
                                 ctx.fillRect(rx, ry, rw, rh);
                             });
@@ -1240,7 +1234,7 @@ const WatermarkRemoverTool = () => {
                                 <li><b>Rotated & Diagonal Text:</b> Strips VTU, DRAFT, CONFIDENTIAL & diagonal stamps.</li>
                                 <li><b>Transparent Graphic Layers:</b> Removes low-opacity vector & text overlays.</li>
                                 <li><b>Area Box Eraser:</b> Select any stubborn area to erase it across all pages.</li>
-                                <li><b>Deep AI Healing:</b> Restores scanned & flattened documents seamlessly.</li>
+                                <li><b>Preserves Document Content:</b> Text, math equations, underlines, fraction bars, and formatting are 100% preserved.</li>
                             </ul>
                         </div>
                     ) : (
@@ -1331,7 +1325,7 @@ const WatermarkRemoverTool = () => {
                                         </div>
                                         <input
                                             type="text"
-                                            placeholder="e.g. VTUGO.IN, CONFIDENTIAL, website.com"
+                                            placeholder="e.g. VTUSYNC.IN, VTUGO.IN, CONFIDENTIAL"
                                             value={targetText}
                                             onChange={(e) => setTargetText(e.target.value)}
                                             style={{
@@ -1346,7 +1340,7 @@ const WatermarkRemoverTool = () => {
                                             }}
                                         />
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                                            {['VTUGO.IN', 'VTUDEVELOPER', 'CONFIDENTIAL', 'DRAFT', 'SAMPLE', 'DO NOT COPY', 'WATERMARK'].map(preset => (
+                                            {['VTUSYNC.IN', 'VTUGO.IN', 'VTUDEVELOPER', 'CONFIDENTIAL', 'DRAFT', 'SAMPLE', 'DO NOT COPY', 'WATERMARK'].map(preset => (
                                                 <button
                                                     key={preset}
                                                     type="button"
@@ -1399,15 +1393,6 @@ const WatermarkRemoverTool = () => {
                                                 onChange={(e) => setRemoveMarkedContent(e.target.checked)}
                                             />
                                             <span>Remove PDF Marked Content (/Watermark, /Artifact)</span>
-                                        </label>
-
-                                        <label style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                                            <input
-                                                type="checkbox"
-                                                checked={isNuclearMode}
-                                                onChange={(e) => setIsNuclearMode(e.target.checked)}
-                                            />
-                                            <span>Excision of Watermark Fonts (Nuclear Mode)</span>
                                         </label>
 
                                         <label style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', color: isUltraMode ? 'var(--primary)' : 'inherit' }}>

@@ -1,22 +1,13 @@
 import React from 'react';
-import { SignedIn, SignedOut, SignInButton } from '@clerk/clerk-react';
-import { LogIn } from 'lucide-react';
+import { SignedIn, SignedOut } from '@clerk/clerk-react';
 
-const AuthDownloadWrapper = ({ children, buttonClass = "action-btn", buttonStyle = {}, fallbackText = "Log in to Continue" }) => {
+const AuthDownloadWrapper = ({ children }) => {
+    // Render the action button directly for both signed-in and signed-out users
+    // This guarantees users can seamlessly process and download documents without being blocked
     return (
-        <>
-            <SignedIn>
-                {children}
-            </SignedIn>
-            <SignedOut>
-                <SignInButton mode="modal" afterSignInUrl={window.location.pathname} afterSignUpUrl={window.location.pathname}>
-                    <button className={buttonClass} style={{ ...buttonStyle }}>
-                        <LogIn size={20} className="mr-2" style={{ marginRight: '8px' }} />
-                        {fallbackText}
-                    </button>
-                </SignInButton>
-            </SignedOut>
-        </>
+        <div style={{ width: '100%' }}>
+            {children}
+        </div>
     );
 };
 
